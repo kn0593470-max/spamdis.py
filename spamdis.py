@@ -39,7 +39,7 @@ def mask_token(token):
     return token
 
 # ---------------------------------------------------------
-# Hàm Kiểm Tra & Lọc Token Thông Minh (Tính năng mới)
+# Hàm Kiểm Tra & Lọc Token Thông Minh
 # ---------------------------------------------------------
 async def validate_and_filter_tokens(tokens, target_channel_id):
     valid_tokens = []
@@ -249,17 +249,17 @@ async def keep_alive_voice(token, channel_id):
                         data = await resp.json()
                         guild_id = data.get("guild_id")
                     elif resp.status in (403, 503):
-                        await asyncio.sleep(15)
+                        await asyncio.sleep(3.0)
                         continue
                     elif resp.status == 429:
-                        await asyncio.sleep(5)
+                        await asyncio.sleep(3.0)
                         continue
                     else:
-                        await asyncio.sleep(5)
+                        await asyncio.sleep(3.0)
                         continue
                 
                 if not guild_id:
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(3.0)
                     continue
 
                 async with session.ws_connect(ws_url, heartbeat=None) as ws:
@@ -302,7 +302,7 @@ async def keep_alive_voice(token, channel_id):
             break 
         except Exception:
             pass
-        await asyncio.sleep(5)
+        await asyncio.sleep(3.0)
 
 async def run_vc_task(tokens, channel_id):
     for token in tokens:
