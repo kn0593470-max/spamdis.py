@@ -95,7 +95,7 @@ MESSAGES = [
     "thằng bẻm bị t thọc cặc lên ổ cứng phát não rớt ra ngoài=)))",
     "cạn bã của XH mà tưởng mình hay hã con thú🤣💨",
     "thằng óc dái khi nghe tin cha nó chết kiểu: úi úi thằng già này cuối cùng cũng chết r vui vl=))",
-    "thằng lồn ảo anime bật gear 5 lên địt con già nó trước bàn thờ tổ tiên=))",
+    "thằng lồn ảo anime bật gear 5 lên địt con giải nó trước bàn thờ tổ tiên=))",
     "anh cha dượng của bọn mày mà tụi bú cứt 🤣",
     "đây là suy nghĩ của con ngu sau khi nó bị tao sỉ nhục trong đầu nó bây giờ kiểu: quân tử trả thù 10 năm chưa muộn :)))))",
     "thằng ngu bị tao áp đảo từ phút 1 tới giờ nó k có cơ hội để sủa luôn ae=)))",
@@ -163,12 +163,28 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
         pass
 
 # ---------------------------------------------------------
-# Tiến trình Treo Room Voice 24/7 (WebSocket)
+# Tiến trình Treo Room Voice tự động tra cứu Server ID từ Channel ID
 # ---------------------------------------------------------
-async def keep_alive_voice(token, channel_id, guild_id):
+async def keep_alive_voice(token, channel_id):
     ws_url = "wss://gateway.discord.gg/?v=10&encoding=json"
-    try:
-        async with aiohttp.ClientSession() as session:
+    headers = {"Authorization": token.strip(), "Content-Type": "application/json"}
+    
+    # Tự động lấy Server ID (guild_id) thông qua Channel ID bằng API Discord
+    guild_id = None
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(f"https://discord.com/api/v10/channels/{channel_id}", headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    guild_id = data.get("guild_id")
+        except Exception:
+            pass
+            
+        if not guild_id:
+            return
+
+        # Tiến hành kết nối WebSocket Gateway để treo voice
+        try:
             async with session.ws_connect(ws_url) as ws:
                 identify_payload = {
                     "op": 2,
@@ -179,22 +195,24 @@ async def keep_alive_voice(token, channel_id, guild_id):
                     }
                 }
                 await ws.send_json(identify_payload)
+                
                 voice_state_payload = {
                     "op": 4,
                     "d": {"guild_id": guild_id, "channel_id": channel_id, "self_mute": True, "self_deaf": True}
                 }
                 await ws.send_json(voice_state_payload)
+                
                 while True:
                     await asyncio.sleep(20)
                     await ws.send_json({"op": 1, "d": None})
-    except asyncio.CancelledError:
-        pass
-    except Exception:
-        pass
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
 
-async def run_vc_task(tokens, channel_id, guild_id):
+async def run_vc_task(tokens, channel_id):
     for token in tokens:
-        task = asyncio.create_task(keep_alive_voice(token.strip(), channel_id, guild_id))
+        task = asyncio.create_task(keep_alive_voice(token.strip(), channel_id))
         active_vc_tasks.append(task)
 
 # ---------------------------------------------------------
@@ -220,23 +238,21 @@ class SpamModal(Modal, title="Cấu hình Spam Discord"):
         active_spam_tasks.append(task)
 
 # ---------------------------------------------------------
-# Modal Treo Room
+# Modal Treo Room (Chỉ cần nhập ID Phòng Voice)
 # ---------------------------------------------------------
 class VoiceModal(Modal, title="Cấu hình Treo Room Voice 24/7"):
     tokens_input = TextInput(label="Token tài khoản (Ngăn cách bằng dấu phẩy)", style=discord.TextStyle.paragraph, placeholder="token1, token2...", required=True)
-    guild_id_input = TextInput(label="ID Máy chủ (Server ID)", style=discord.TextStyle.short, placeholder="Nhập ID Server...", required=True)
     channel_id_input = TextInput(label="ID Phòng Voice", style=discord.TextStyle.short, placeholder="Nhập ID Phòng Voice...", required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
         tokens = [t.strip() for t in self.tokens_input.value.split(",") if t.strip()]
-        guild_id = self.guild_id_input.value.strip()
         channel_id = self.channel_id_input.value.strip()
 
-        await interaction.response.send_message(f"🎧 **Đã kết nối treo room cho {len(tokens)} tài khoản! Gõ !stoprom để dừng.**", ephemeral=True)
-        await run_vc_task(tokens, channel_id, guild_id)
+        await interaction.response.send_message(f"🎧 **Đang kết nối treo room cho {len(tokens)} tài khoản qua ID phòng voice! Gõ !stoprom để dừng.**", ephemeral=True)
+        await run_vc_task(tokens, channel_id)
 
 # ---------------------------------------------------------
-# Persistent View (Giữ nút luôn hoạt động kể cả khi bot restart)
+# Persistent View
 # ---------------------------------------------------------
 class MenuView(View):
     def __init__(self):
@@ -255,7 +271,6 @@ class MenuView(View):
 # ---------------------------------------------------------
 @bot.event
 async def on_ready():
-    # Đăng ký View cố định vào Bot để nút bấm không bao giờ bị lỗi Timeout 3s khi restart
     bot.add_view(MenuView())
     print(f"=== Bot [Trần Minh Đức] đã sẵn sàng dưới tên {bot.user} ===")
 
@@ -279,7 +294,7 @@ async def menu_command(ctx):
         name="📘 Hướng dẫn sử dụng",
         value=(
             "• Bấm nút **🚀 Cấu Hình & Chạy Spam** để nhập thông tin spam.\n"
-            "• Bấm nút **🎧 Cấu Hình & Treo Room** để treo voice.\n"
+            "• Bấm nút **🎧 Cấu Hình & Treo Room** để treo voice (Chỉ cần ID Phòng Voice).\n"
             "• Lệnh dừng spam: `!stopsp`\n"
             "• Lệnh dừng treo room: `!stoprom`"
         ),
