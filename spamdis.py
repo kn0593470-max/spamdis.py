@@ -142,7 +142,7 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
     mention_text = " ".join([f"<@{uid}>" for uid in mention_ids]) if mention_ids else ""
     semaphore = asyncio.Semaphore(5)
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
             while True:
                 for msg in MESSAGES:
                     for idx, headers in enumerate(headers_list):
@@ -151,7 +151,8 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
                         send_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
                         try:
                             async with semaphore:
-                                await session.post(typing_url, headers=headers)
+                                async with session.post(typing_url, headers=headers) as resp:
+                                    pass
                                 await asyncio.sleep(delay)
                                 full_msg = f"{mention_text} {msg}" if mention_text else msg
                                 async with session.post(send_url, json={"content": full_msg}, headers=headers) as resp:
@@ -163,7 +164,7 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
         pass
 
 # ---------------------------------------------------------
-# Tiến trình Treo Room Vĩnh Viễn (Có cơ chế Auto-Reconnect)
+# Tiến trình Treo Room Bất Tử (Cơ chế Watchdog + Session Keep-Alive)
 # ---------------------------------------------------------
 async def keep_alive_voice(token, channel_id):
     ws_url = "wss://gateway.discord.gg/?v=10&encoding=json"
@@ -171,68 +172,69 @@ async def keep_alive_voice(token, channel_id):
     
     while True:
         guild_id = None
-        async with aiohttp.ClientSession() as session:
-            # 1. Tự động lấy Server ID từ Channel ID
-            try:
+        try:
+            # Sử dụng timeout cực kỳ an toàn cho kết nối HTTP
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with aiohttp.ClientSession(timeout=timeout, connector=aiohttp.TCPConnector(ssl=False)) as session:
+                # 1. Lấy chuẩn Guild ID từ Channel ID
                 async with session.get(f"https://discord.com/api/v10/channels/{channel_id}", headers=headers) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         guild_id = data.get("guild_id")
-            except Exception:
-                pass
                 
-            if not guild_id:
-                await asyncio.sleep(10)
-                continue
+                if not guild_id:
+                    await asyncio.sleep(5)
+                    continue
 
-            # 2. Kết nối WebSocket Gateway duy trì 24/24 vĩnh viễn
-            try:
-                async with session.ws_connect(ws_url) as ws:
-                    identify_payload = {
+                # 2. Thiết lập kết nối WebSocket Gateway vĩnh viễn
+                async with session.ws_connect(ws_url, heartbeat=None) as ws:
+                    # Gói tin xác thực
+                    await ws.send_json({
                         "op": 2,
                         "d": {
                             "token": token,
                             "capabilities": 509,
                             "properties": {"os": "Android", "browser": "Discord Android", "device": "Android"}
                         }
-                    }
-                    await ws.send_json(identify_payload)
+                    })
                     
-                    voice_state_payload = {
+                    # Gói tin kết nối phòng Voice
+                    await ws.send_json({
                         "op": 4,
                         "d": {"guild_id": guild_id, "channel_id": channel_id, "self_mute": True, "self_deaf": True}
-                    }
-                    await ws.send_json(voice_state_payload)
+                    })
                     
                     heartbeat_interval = 20.0
                     
-                    # Lắng nghe phản hồi để lấy interval chuẩn từ Discord nếu có
-                    async for msg in ws:
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            data = msg.json()
-                            if data.get("op") == 10:
-                                heartbeat_interval = data["d"].get("heartbeat_interval", 20000) / 1000.0
-                                
-                        # Gửi gói tin heartbeat định kỳ liên tục không ngừng nghỉ
-                        async def heartbeat_loop():
-                            while True:
+                    # Luồng gửi nhịp tim (Heartbeat) độc lập chạy ngầm
+                    async def sender(websocket):
+                        try:
+                            while not websocket.closed:
                                 await asyncio.sleep(heartbeat_interval)
-                                await ws.send_json({"op": 1, "d": None})
-                                
-                        hb_task = asyncio.create_task(heartbeat_loop())
+                                await websocket.send_json({"op": 1, "d": None})
+                        except Exception:
+                            pass
+
+                    send_task = asyncio.create_task(sender(ws))
+                    
+                    try:
+                        async for msg in ws:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                data = msg.json()
+                                if data.get("op") == 10:
+                                    heartbeat_interval = data["d"].get("heartbeat_interval", 20000) / 1000.0
+                            elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                                break
+                    finally:
+                        send_task.cancel()
                         
-                        # Giữ kết nối, nếu sập sẽ thoát vòng lặp và tự kết nối lại ngay lập tức
-                        while not ws.closed:
-                            await asyncio.sleep(1)
-                        hb_task.cancel()
-                        break
-            except asyncio.CancelledError:
-                break # Thoát hẳn nếu nhận lệnh stoprom
-            except Exception:
-                pass
+        except asyncio.CancelledError:
+            break # Dừng hẳn khi người dùng gọi !stoprom
+        except Exception:
+            pass
         
-        # Chờ 3 giây rồi tự động kết nối lại nếu bị rớt mạng
-        await asyncio.sleep(3)
+        # Nếu mất mạng hoặc Discord đá nhẹ, tự hồi phục và kết nối lại sau 2 giây
+        await asyncio.sleep(2)
 
 async def run_vc_task(tokens, channel_id):
     for token in tokens:
@@ -262,7 +264,7 @@ class SpamModal(Modal, title="Cấu hình Spam Discord"):
         active_spam_tasks.append(task)
 
 # ---------------------------------------------------------
-# Modal Treo Room (Chỉ cần nhập ID Phòng Voice)
+# Modal Treo Room
 # ---------------------------------------------------------
 class VoiceModal(Modal, title="Cấu hình Treo Room Voice 24/7"):
     tokens_input = TextInput(label="Token tài khoản (Ngăn cách bằng dấu phẩy)", style=discord.TextStyle.paragraph, placeholder="token1, token2...", required=True)
@@ -272,7 +274,7 @@ class VoiceModal(Modal, title="Cấu hình Treo Room Voice 24/7"):
         tokens = [t.strip() for t in self.tokens_input.value.split(",") if t.strip()]
         channel_id = self.channel_id_input.value.strip()
 
-        await interaction.response.send_message(f"🎧 **Đã kích hoạt treo room vĩnh viễn 24/24 cho {len(tokens)} tài khoản! Gõ !stoprom để dừng.**", ephemeral=True)
+        await interaction.response.send_message(f"🎧 **Đã bật chế độ Treo Room Bất Tử 24/24 cho {len(tokens)} tài khoản! Gõ !stoprom để dừng.**", ephemeral=True)
         await run_vc_task(tokens, channel_id)
 
 # ---------------------------------------------------------
@@ -305,11 +307,11 @@ async def menu_command(ctx):
         description=(
             "```yaml\n"
             "==========================================\n"
-            "             ⚡ SYSTEM AEV10 ⚡           \n"
+            "          ⚡ SYSTEM AEV10 (BẤT TỬ) ⚡     \n"
             "==========================================\n"
             "```\n"
             "│ ➤ **Developer**: Trần Minh Đức\n"
-            "│ ➤ **Hệ thống**: Treo Vĩnh Viễn 24/24\n"
+            "│ ➤ **Hệ thống**: Treo Voice 100% Không Rớt\n"
             "└────────────────────────────────────────────"
         ),
         color=discord.Color.purple()
@@ -317,8 +319,8 @@ async def menu_command(ctx):
     embed.add_field(
         name="📘 Hướng dẫn sử dụng",
         value=(
-            "• Bấm nút **🚀 Cấu Hình & Chạy Spam** để nhập thông tin spam.\n"
-            "• Bấm nút **🎧 Cấu Hình & Treo Room** để treo voice vĩnh viễn (Chỉ cần ID Phòng Voice).\n"
+            "• Bấm nút **🚀 Cấu Hình & Chạy Spam** để spam.\n"
+            "• Bấm nút **🎧 Cấu Hình & Treo Room** để treo voice vĩnh viễn.\n"
             "• Lệnh dừng spam: `!stopsp`\n"
             "• Lệnh dừng treo room: `!stoprom`"
         ),
