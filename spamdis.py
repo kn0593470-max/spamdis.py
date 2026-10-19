@@ -3,7 +3,7 @@ import aiohttp
 import asyncio
 import discord
 from discord.ext import commands
-from discord.ui import View, Select, Modal, TextInput
+from discord.ui import View, Button, Modal, TextInput
 
 # Danh sách câu spam / ngôn gốc
 MESSAGES = [
@@ -132,7 +132,7 @@ active_spam_tasks = []
 active_vc_tasks = []
 
 # ---------------------------------------------------------
-# Tiến trình chạy Spam ngầm
+# Tiến trình Spam
 # ---------------------------------------------------------
 async def run_spam_task(tokens, channels, mention_ids, delay):
     headers_list = [{"Authorization": t.strip(), "Content-Type": "application/json"} for t in tokens if t.strip()]
@@ -141,7 +141,6 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
         return
     mention_text = " ".join([f"<@{uid}>" for uid in mention_ids]) if mention_ids else ""
     semaphore = asyncio.Semaphore(5)
-    
     try:
         async with aiohttp.ClientSession() as session:
             while True:
@@ -164,7 +163,7 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
         pass
 
 # ---------------------------------------------------------
-# Tiến trình Treo Room Voice 24/7 (Kết nối WebSocket Gateway)
+# Tiến trình Treo Room Voice
 # ---------------------------------------------------------
 async def keep_alive_voice(token, channel_id, guild_id):
     ws_url = "wss://gateway.discord.gg/?v=10&encoding=json"
@@ -176,26 +175,15 @@ async def keep_alive_voice(token, channel_id, guild_id):
                     "d": {
                         "token": token,
                         "capabilities": 509,
-                        "properties": {
-                            "os": "Android",
-                            "browser": "Discord Android",
-                            "device": "Android"
-                        }
+                        "properties": {"os": "Android", "browser": "Discord Android", "device": "Android"}
                     }
                 }
                 await ws.send_json(identify_payload)
-                
                 voice_state_payload = {
                     "op": 4,
-                    "d": {
-                        "guild_id": guild_id,
-                        "channel_id": channel_id,
-                        "self_mute": True,
-                        "self_deaf": True
-                    }
+                    "d": {"guild_id": guild_id, "channel_id": channel_id, "self_mute": True, "self_deaf": True}
                 }
                 await ws.send_json(voice_state_payload)
-
                 while True:
                     await asyncio.sleep(20)
                     await ws.send_json({"op": 1, "d": None})
@@ -210,7 +198,7 @@ async def run_vc_task(tokens, channel_id, guild_id):
         active_vc_tasks.append(task)
 
 # ---------------------------------------------------------
-# Bảng Modal nhập liệu Spam
+# Bảng Modal Cấu hình Spam
 # ---------------------------------------------------------
 class SpamModal(Modal):
     def __init__(self):
@@ -233,20 +221,19 @@ class SpamModal(Modal):
         except ValueError:
             delay = 1.0
 
-        await interaction.response.send_message("⚡ **Đã kích hoạt Spam Discord thành công! Gõ !stopsp để dừng.**", ephemeral=True)
+        await interaction.response.send_message("⚡ **Đã kích hoạt Spam thành công! Gõ !stopsp để dừng.**", ephemeral=True)
         task = asyncio.create_task(run_spam_task(tokens, channels, mention_ids, delay))
         active_spam_tasks.append(task)
 
 # ---------------------------------------------------------
-# Bảng Modal nhập liệu Treo Room
+# Bảng Modal Cấu hình Treo Room
 # ---------------------------------------------------------
 class VoiceModal(Modal):
     def __init__(self):
         super().__init__(title="Cấu hình Treo Room Voice 24/7")
-        self.tokens_input = TextInput(label="Token tài khoản treo room (ngăn cách dấu phẩy)", style=discord.TextStyle.paragraph, placeholder="token1, token2...", required=True)
+        self.tokens_input = TextInput(label="Token tài khoản treo room (cách nhau dấu phẩy)", style=discord.TextStyle.paragraph, placeholder="token1, token2...", required=True)
         self.guild_id_input = TextInput(label="ID Máy chủ (Server ID)", style=discord.TextStyle.short, placeholder="Nhập ID Server...", required=True)
-        self.channel_id_input = TextInput(label="ID Phòng Voice (Voice Channel ID)", style=discord.TextStyle.short, placeholder="Nhập ID Phòng Voice...", required=True)
-        
+        self.channel_id_input = TextInput(label="ID Phòng Voice", style=discord.TextStyle.short, placeholder="Nhập ID Phòng Voice...", required=True)
         self.add_item(self.tokens_input)
         self.add_item(self.guild_id_input)
         self.add_item(self.channel_id_input)
@@ -260,30 +247,22 @@ class VoiceModal(Modal):
         await run_vc_task(tokens, channel_id, guild_id)
 
 # ---------------------------------------------------------
-# Menu thả xuống chọn tính năng
+# Giao diện Nút Bấm (Button View) - Siêu mượt trên Mobile
 # ---------------------------------------------------------
-class MenuSelect(Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="🚀 Chức năng: Spam Discord", value="spam", description="Spam tin nhắn + giả lập typing liên tục"),
-            discord.SelectOption(label="🎧 Chức năng: Treo Room Voice 24/7", value="voice", description="Treo tài khoản trong phòng voice không bị out"),
-        ]
-        super().__init__(placeholder="👉 Bấm vào đây để chọn tính năng muốn dùng...", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        # Mở Modal ngay lập tức để không bị quá 3s timeout
-        if self.values[0] == "spam":
-            await interaction.response.send_modal(SpamModal())
-        elif self.values[0] == "voice":
-            await interaction.response.send_modal(VoiceModal())
-
 class MenuView(View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(MenuSelect())
+
+    @discord.button(label="🚀 Cấu Hình & Chạy Spam", style=discord.ButtonStyle.green, custom_id="btn_spam")
+    async def spam_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(SpamModal())
+
+    @discord.button(label="🎧 Cấu Hình & Treo Room", style=discord.ButtonStyle.blurple, custom_id="btn_voice")
+    async def voice_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(VoiceModal())
 
 # ---------------------------------------------------------
-# Lệnh Menu & Stop
+# Lệnh Bot
 # ---------------------------------------------------------
 @bot.event
 async def on_ready():
@@ -300,43 +279,43 @@ async def menu_command(ctx):
             "==========================================\n"
             "```\n"
             "│ ➤ **Developer**: Trần Minh Đức\n"
-            "│ ➤ **Hệ thống**: Spam & Treo Room Voice 24/7\n"
+            "│ ➤ **Hệ thống**: Giao Diện Nút Bấm 24/7\n"
             "└────────────────────────────────────────────"
         ),
         color=discord.Color.purple()
     )
     embed.add_field(
-        name="📘 Hướng dẫn",
-        value="Hãy chọn tính năng bạn muốn sử dụng ở Menu thả xuống bên dưới.",
+        name="📘 Hướng dẫn sử dụng",
+        value=(
+            "• Bấm nút **🚀 Cấu Hình & Chạy Spam** để nhập thông tin spam.\n"
+            "• Bấm nút **🎧 Cấu Hình & Treo Room** để treo voice.\n"
+            "• Lệnh dừng spam: `!stopsp`\n"
+            "• Lệnh dừng treo room: `!stoprom`"
+        ),
         inline=False
     )
-    
     await ctx.send(embed=embed, view=MenuView())
 
 @bot.command(name="stopsp")
 async def stop_spam(ctx):
     global active_spam_tasks
     if not active_spam_tasks:
-        await ctx.send("⚠️ Hiện không có tiến trình spam nào đang chạy!")
+        await ctx.send("⚠️ Không có tiến trình spam nào đang chạy!")
         return
-    
     count = len(active_spam_tasks)
     for task in active_spam_tasks:
         task.cancel()
     active_spam_tasks.clear()
-    
-    await ctx.send(f"🛑 **Đã dừng thành công {count} tiến trình Spam Discord!**")
+    await ctx.send(f"🛑 **Đã dừng thành công {count} tiến trình Spam!**")
 
 @bot.command(name="stoprom")
 async def stop_room(ctx):
     global active_vc_tasks
     if not active_vc_tasks:
-        await ctx.send("⚠️ Hiện không có tài khoản nào đang treo room!")
+        await ctx.send("⚠️ Không có tài khoản nào đang treo room!")
         return
-    
     count = len(active_vc_tasks)
     for task in active_vc_tasks:
         task.cancel()
     active_vc_tasks.clear()
-    
     await ctx.send(f"🛑 **Đã ngắt kết nối và dừng treo room cho {count} tài khoản!**")
