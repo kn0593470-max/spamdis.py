@@ -29,14 +29,57 @@ def save_user_tokens(data):
         pass
 
 def get_tokens_for_user(user_id, raw_input):
-    """Trích xuất danh sách token: từ 'my' hoặc chuỗi phân cách dấu phẩy"""
     if raw_input.strip().lower() == "my":
         data = load_user_tokens()
         return data.get(str(user_id), [])
     return [t.strip() for t in raw_input.split(",") if t.strip()]
 
+def mask_token(token):
+    if len(token) > 15:
+        return token[:10] + "..." + token[-5:]
+    return token
+
 # ---------------------------------------------------------
-# Kho Ngôn Mặc Định (Chuẩn 1 câu / 1 dòng)
+# Hàm Kiểm Tra Token Hợp Lệ & Kiểm Tra Join Server
+# ---------------------------------------------------------
+async def validate_and_filter_tokens(tokens, target_channel_id):
+    """
+    Kiểm tra danh sách token:
+    1. Token sống hay chết (lấy guild_id từ channel)
+    2. Token đã join Server chưa
+    Trả về: (valid_tokens_for_run, invalid_count, not_joined_tokens)
+    """
+    valid_tokens = []
+    not_joined_tokens = []
+    invalid_count = 0
+    
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+        for token in tokens:
+            headers = {
+                "Authorization": token.strip(),
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Android; Mobile; rv:120.0) Gecko/120.0 Firefox/120.0"
+            }
+            try:
+                # Lấy thông tin kênh để kiểm tra token có quyền truy cập / đã join server chưa
+                async with session.get(f"https://discord.com/api/v10/channels/{target_channel_id}", headers=headers) as resp:
+                    if resp.status == 200:
+                        valid_tokens.append(token.strip())
+                    elif resp.status in (401, 400): # Token sai hoặc hỏng
+                        invalid_count += 1
+                    elif resp.status in (403, 404): # Token sống nhưng chưa join server hoặc không có quyền truy cập kênh
+                        not_joined_tokens.append(token.strip())
+                    elif resp.status == 429: # Rate limit -> Tạm thời cho vào danh sách chạy
+                        valid_tokens.append(token.strip())
+                    else:
+                        invalid_count += 1
+            except Exception:
+                invalid_count += 1
+
+    return valid_tokens, invalid_count, not_joined_tokens
+
+# ---------------------------------------------------------
+# Kho Ngôn Mặc Định
 # ---------------------------------------------------------
 MESSAGES = [
     "sao m rụng ngay khi anh đến r",
@@ -135,12 +178,12 @@ MESSAGES = [
     "thằng cặc bị tao hạ đo ván sau 1 cú sút ngoạn mục đến từ vị trí anh trung hw=)))",
     "thằng óc cặc đòi va anh và cái kết bị anh chửi chạy khắp nơi=))",
     "mẹ mày bị t địt rách màn trinh mà🤪",
-    "🤭🤭Mày bê đê ngũ sắc dell công khai bị tao chọc quá máu cặc mày dồn lên脑 choa mày chết hả",
+    "🤭🤭Mày bê đê ngũ sắc dell công khai bị tao chọc quá máu cặc mày dồn lên brain choa mày chết hả",
     "nhà thằng đú này nghèo không có tiền chơi gái nên phải loạn luân luôn với mẹ nó để giải khát cơn thèm thuồng",
     "thằng cầm thú loạn luân some với mẹ ruột và ba ruột còn quay clip",
     "m bị óc cứt hay sao z hả mà t nói m dell hiểu hay bố phải nhét cứt vào đầu m thì m mới thông hả con óc lồn ơi",
     "Một lũ xam cu lên đây đú ửa ngôn thì nhạt như cái nước lồn của con đỉ mẹ cm v hăng lên đi con mẹ mày bị t xé rách mu sao chối ????",
-    "bà giảm mày bị tao treo cổ lên trên trần nhà mà?",
+    "bà già mày bị tao treo cổ lên trên trần nhà mà?",
     "thằng bất tài vô dụng sủa mạnh lên đi",
     "cố gắng để win tao nhá",
     "tao bất bại mà thằng ngu?",
@@ -164,7 +207,7 @@ active_spam_tasks = []
 active_vc_tasks = []
 
 # ---------------------------------------------------------
-# Core Engine - Tiến trình Spam & Treo Voice
+# Tiến trình Spam
 # ---------------------------------------------------------
 async def run_spam_task(tokens, channels, mention_ids, delay, mode):
     headers_list = [{"Authorization": t.strip(), "Content-Type": "application/json"} for t in tokens if t.strip()]
@@ -175,58 +218,75 @@ async def run_spam_task(tokens, channels, mention_ids, delay, mode):
     
     try:
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
-            if mode == "1":  # Tuần tự
+            if mode == "1":
                 while True:
                     for msg in MESSAGES:
                         for idx, headers in enumerate(headers_list):
                             channel_id = channel_list[idx % len(channel_list)]
                             await send_spam_msg(session, headers, channel_id, mention_text, msg, delay)
                         await asyncio.sleep(delay)
-            
-            elif mode == "2":  # Ngẫu nhiên
+            elif mode == "2":
                 while True:
                     msg = random.choice(MESSAGES)
                     for idx, headers in enumerate(headers_list):
                         channel_id = channel_list[idx % len(channel_list)]
                         await send_spam_msg(session, headers, channel_id, mention_text, msg, delay)
                     await asyncio.sleep(delay)
-
-            elif mode == "3":  # Không trùng nhau
+            elif mode == "3":
                 while True:
                     available_msgs = MESSAGES.copy()
                     random.shuffle(available_msgs)
-                    
                     for idx, headers in enumerate(headers_list):
                         if not available_msgs:
                             break
                         msg = available_msgs.pop(0)
                         channel_id = channel_list[idx % len(channel_list)]
                         asyncio.create_task(send_spam_msg(session, headers, channel_id, mention_text, msg, delay))
-                    
                     await asyncio.sleep(delay + 1.0)
     except asyncio.CancelledError:
         pass
 
 async def send_spam_msg(session, headers, channel_id, mention_text, msg, delay):
+    custom_headers = {
+        **headers,
+        "User-Agent": "Mozilla/5.0 (Android; Mobile; rv:120.0) Gecko/120.0 Firefox/120.0"
+    }
     typing_url = f"https://discord.com/api/v10/channels/{channel_id}/typing"
     send_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     try:
-        async with session.post(typing_url, headers=headers) as resp:
-            if resp.status == 429:
+        async with session.post(typing_url, headers=custom_headers) as resp:
+            if resp.status in (403, 503):
+                await asyncio.sleep(5)
+                return
+            elif resp.status == 429:
                 data = await resp.json()
                 await asyncio.sleep(data.get("retry_after", 1.0))
+                
         await asyncio.sleep(delay)
         full_msg = f"{mention_text} {msg}" if mention_text else msg
-        async with session.post(send_url, json={"content": full_msg}, headers=headers) as resp:
-            if resp.status == 429:
-                data = await resp.json()
-                await asyncio.sleep(data.get("retry_after", 2.0))
+        
+        async with session.post(send_url, json={"content": full_msg}, headers=custom_headers) as resp:
+            if resp.status in (403, 503):
+                await asyncio.sleep(10)
+            elif resp.status == 429:
+                try:
+                    data = await resp.json()
+                    await asyncio.sleep(data.get("retry_after", 2.0))
+                except Exception:
+                    await asyncio.sleep(5)
     except Exception:
         pass
 
+# ---------------------------------------------------------
+# Tiến trình Treo Voice
+# ---------------------------------------------------------
 async def keep_alive_voice(token, channel_id):
     ws_url = "wss://gateway.discord.gg/?v=10&encoding=json"
-    headers = {"Authorization": token.strip(), "Content-Type": "application/json"}
+    headers = {
+        "Authorization": token.strip(), 
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Android; Mobile; rv:120.0) Gecko/120.0 Firefox/120.0"
+    }
     
     while True:
         guild_id = None
@@ -237,7 +297,13 @@ async def keep_alive_voice(token, channel_id):
                     if resp.status == 200:
                         data = await resp.json()
                         guild_id = data.get("guild_id")
+                    elif resp.status in (403, 503):
+                        await asyncio.sleep(15)
+                        continue
                     elif resp.status == 429:
+                        await asyncio.sleep(5)
+                        continue
+                    else:
                         await asyncio.sleep(5)
                         continue
                 
@@ -286,7 +352,7 @@ async def keep_alive_voice(token, channel_id):
         await asyncio.sleep(5)
 
 # ---------------------------------------------------------
-# Modal Forms (Thao Tác Nút Bấm Cho Người Lười Gõ)
+# Modal Forms
 # ---------------------------------------------------------
 class SpamModal(Modal, title="Cấu hình Tool Discord - Spam"):
     tokens_input = TextInput(label="Token (Dán trực tiếp hoặc gõ 'my')", style=discord.TextStyle.paragraph, placeholder="token1, token2... hoặc gõ 'my'", required=True)
@@ -296,12 +362,34 @@ class SpamModal(Modal, title="Cấu hình Tool Discord - Spam"):
     delay_input = TextInput(label="Delay (giây)", style=discord.TextStyle.short, default="1.0", required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
-        tokens = get_tokens_for_user(interaction.user.id, self.tokens_input.value)
-        if not tokens:
-            await interaction.response.send_message("❌ **Kho token trống! Hãy gõ `!settoken` trước.**", ephemeral=True)
+        await interaction.response.defer(ephemeral=True) # Tránh bị timeout khi lọc token
+        
+        raw_tokens = get_tokens_for_user(interaction.user.id, self.tokens_input.value)
+        if not raw_tokens:
+            await interaction.followup.send("❌ **Kho token trống! Hãy gõ `!settoken` trước.**", ephemeral=True)
             return
 
         channels = [c.strip() for c in self.channels_input.value.split(",") if c.strip()]
+        if not channels:
+            await interaction.followup.send("❌ **Vui lòng nhập ID Kênh hợp lệ!**", ephemeral=True)
+            return
+
+        target_channel = channels[0]
+        valid_tokens, invalid_count, not_joined_tokens = await validate_and_filter_tokens(raw_tokens, target_channel)
+
+        msg_report = []
+        if invalid_count > 0:
+            msg_report.append(f"⚠️ **Đã tự động loại bỏ {invalid_count} Token sai/hỏng!**")
+        
+        if not_joined_tokens:
+            masked_list = "\n".join([f"• `{mask_token(t)}`" for t in not_joined_tokens])
+            msg_report.append(f"🔴 **Phát hiện {len(not_joined_tokens)} Token CHƯA JOIN SERVER! Hãy cho các token này join server trước:**\n{masked_list}")
+
+        if not valid_tokens:
+            msg_report.append("❌ **Không có token nào hợp lệ và đã join server để chạy!**")
+            await interaction.followup.send("\n\n".join(msg_report), ephemeral=True)
+            return
+
         mention_ids = [m.strip() for m in self.tags_input.value.split(",") if m.strip()]
         mode = self.mode_input.value.strip() if self.mode_input.value.strip() in ["1", "2", "3"] else "3"
         try:
@@ -309,8 +397,10 @@ class SpamModal(Modal, title="Cấu hình Tool Discord - Spam"):
         except ValueError:
             delay = 1.0
 
-        await interaction.response.send_message(f"⚡ **Tool Discord đã khởi chạy (Chế độ {mode}) với {len(tokens)} token!**", ephemeral=True)
-        task = asyncio.create_task(run_spam_task(tokens, channels, mention_ids, delay, mode))
+        msg_report.append(f"⚡ **Khởi chạy Spam (Chế độ {mode}) thành công cho {len(valid_tokens)} Token hợp lệ!**")
+        await interaction.followup.send("\n\n".join(msg_report), ephemeral=True)
+
+        task = asyncio.create_task(run_spam_task(valid_tokens, channels, mention_ids, delay, mode))
         active_spam_tasks.append(task)
 
 class VoiceModal(Modal, title="Cấu hình Treo Room Voice 24/7"):
@@ -318,15 +408,34 @@ class VoiceModal(Modal, title="Cấu hình Treo Room Voice 24/7"):
     channel_id_input = TextInput(label="ID Phòng Voice", style=discord.TextStyle.short, placeholder="Nhập ID Phòng...", required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
-        tokens = get_tokens_for_user(interaction.user.id, self.tokens_input.value)
-        if not tokens:
-            await interaction.response.send_message("❌ **Kho token trống! Hãy gõ `!settoken` trước.**", ephemeral=True)
+        await interaction.response.defer(ephemeral=True)
+
+        raw_tokens = get_tokens_for_user(interaction.user.id, self.tokens_input.value)
+        if not raw_tokens:
+            await interaction.followup.send("❌ **Kho token trống! Hãy gõ `!settoken` trước.**", ephemeral=True)
             return
 
         channel_id = self.channel_id_input.value.strip()
-        await interaction.response.send_message(f"🎧 **Đã bật Treo Room Voice cho {len(tokens)} tài khoản!**", ephemeral=True)
-        for token in tokens:
-            task = asyncio.create_task(keep_alive_voice(token.strip(), channel_id))
+        valid_tokens, invalid_count, not_joined_tokens = await validate_and_filter_tokens(raw_tokens, channel_id)
+
+        msg_report = []
+        if invalid_count > 0:
+            msg_report.append(f"⚠️ **Đã tự động loại bỏ {invalid_count} Token sai/hỏng!**")
+        
+        if not_joined_tokens:
+            masked_list = "\n".join([f"• `{mask_token(t)}`" for t in not_joined_tokens])
+            msg_report.append(f"🔴 **Phát hiện {len(not_joined_tokens)} Token CHƯA JOIN SERVER! Vui lòng cho join server trước:**\n{masked_list}")
+
+        if not valid_tokens:
+            msg_report.append("❌ **Không có token nào hợp lệ và đã join server để treo voice!**")
+            await interaction.followup.send("\n\n".join(msg_report), ephemeral=True)
+            return
+
+        msg_report.append(f"🎧 **Đã bật Treo Room Voice cho {len(valid_tokens)} Token hợp lệ!**")
+        await interaction.followup.send("\n\n".join(msg_report), ephemeral=True)
+
+        for token in valid_tokens:
+            task = asyncio.create_task(keep_alive_voice(token, channel_id))
             active_vc_tasks.append(task)
 
 class SetTokenModal(Modal, title="Lưu Kho Token Cá Nhân"):
@@ -344,7 +453,7 @@ class SetTokenModal(Modal, title="Lưu Kho Token Cá Nhân"):
         await interaction.response.send_message(f"✅ **Đã lưu {len(tokens)} token vào kho cá nhân của bạn!**", ephemeral=True)
 
 # ---------------------------------------------------------
-# Interactive Menu View (Các Nút Bấm Cho Người Lười Gõ)
+# Interactive Menu View
 # ---------------------------------------------------------
 class MenuView(View):
     def __init__(self):
@@ -387,11 +496,10 @@ class MenuView(View):
         await interaction.response.send_message(f"🛑 Đã dừng treo voice cho {count} tài khoản!", ephemeral=True)
 
 # ---------------------------------------------------------
-# Hệ Thống Lệnh Gõ Trực Tiếp (Dành Cho Ai Thích Chat Command)
+# Lệnh Chat Direct (Đã cập nhật Auto-Check)
 # ---------------------------------------------------------
 @bot.command(name="settoken")
 async def set_token_cmd(ctx, *, tokens_str: str = None):
-    """Lưu token qua lệnh chat"""
     if not tokens_str:
         await ctx.send(f"⚠️ **Cú pháp:** `!settoken token1, token2...`")
         return
@@ -403,43 +511,69 @@ async def set_token_cmd(ctx, *, tokens_str: str = None):
 
 @bot.command(name="mytoken")
 async def my_token_cmd(ctx):
-    """Xem kho token cá nhân"""
     tokens = load_user_tokens().get(str(ctx.author.id), [])
     if not tokens:
         await ctx.send("⚠️ **Kho token của bạn đang trống! Hãy dùng `!settoken` hoặc bấm nút Lưu Token trên Menu.**")
         return
-    masked = [t[:10] + "..." + t[-5:] for t in tokens]
+    masked = [mask_token(t) for t in tokens]
     await ctx.send(f"📂 **Kho token cá nhân ({len(tokens)} token):**\n```yaml\n" + "\n".join(masked) + "\n```")
 
 @bot.command(name="spam")
 async def spam_cmd(ctx, tokens_input: str, channels_input: str, mode: str = "3", delay: float = 1.0, *, tags_input: str = ""):
-    """Khởi chạy spam qua lệnh gõ trực tiếp"""
-    tokens = get_tokens_for_user(ctx.author.id, tokens_input)
-    if not tokens:
+    raw_tokens = get_tokens_for_user(ctx.author.id, tokens_input)
+    if not raw_tokens:
         await ctx.send("❌ **Không tìm thấy token! Hãy gõ `!settoken` trước.**")
         return
     channels = [c.strip() for c in channels_input.split(",") if c.strip()]
+    if not channels:
+        await ctx.send("❌ **Vui lòng nhập ID Kênh!**")
+        return
+
+    valid_tokens, invalid_count, not_joined_tokens = await validate_and_filter_tokens(raw_tokens, channels[0])
+
+    if invalid_count > 0:
+        await ctx.send(f"⚠️ **Đã tự động loại bỏ {invalid_count} Token sai/hỏng!**")
+
+    if not_joined_tokens:
+        masked_list = "\n".join([f"• `{mask_token(t)}`" for t in not_joined_tokens])
+        await ctx.send(f"🔴 **Phát hiện {len(not_joined_tokens)} Token CHƯA JOIN SERVER! Hãy cho join server trước:**\n{masked_list}")
+
+    if not valid_tokens:
+        await ctx.send("❌ **Không có token nào hợp lệ và đã join server để chạy!**")
+        return
+
     mention_ids = [m.strip() for m in tags_input.split(",") if m.strip()]
-    
-    await ctx.send(f"⚡ **Khởi chạy Spam (Chế độ {mode}) cho {len(tokens)} token qua lệnh chat!**")
-    task = asyncio.create_task(run_spam_task(tokens, channels, mention_ids, delay, mode))
+    await ctx.send(f"⚡ **Khởi chạy Spam (Chế độ {mode}) cho {len(valid_tokens)} Token hợp lệ!**")
+    task = asyncio.create_task(run_spam_task(valid_tokens, channels, mention_ids, delay, mode))
     active_spam_tasks.append(task)
 
 @bot.command(name="voice")
 async def voice_cmd(ctx, tokens_input: str, channel_id: str):
-    """Khởi chạy treo room voice qua lệnh gõ trực tiếp"""
-    tokens = get_tokens_for_user(ctx.author.id, tokens_input)
-    if not tokens:
+    raw_tokens = get_tokens_for_user(ctx.author.id, tokens_input)
+    if not raw_tokens:
         await ctx.send("❌ **Không tìm thấy token! Hãy gõ `!settoken` trước.**")
         return
-    await ctx.send(f"🎧 **Đã bật Treo Room Voice cho {len(tokens)} tài khoản qua lệnh chat!**")
-    for token in tokens:
-        task = asyncio.create_task(keep_alive_voice(token.strip(), channel_id))
+
+    valid_tokens, invalid_count, not_joined_tokens = await validate_and_filter_tokens(raw_tokens, channel_id)
+
+    if invalid_count > 0:
+        await ctx.send(f"⚠️ **Đã tự động loại bỏ {invalid_count} Token sai/hỏng!**")
+
+    if not_joined_tokens:
+        masked_list = "\n".join([f"• `{mask_token(t)}`" for t in not_joined_tokens])
+        await ctx.send(f"🔴 **Phát hiện {len(not_joined_tokens)} Token CHƯA JOIN SERVER! Vui lòng cho join server trước:**\n{masked_list}")
+
+    if not valid_tokens:
+        await ctx.send("❌ **Không có token nào hợp lệ và đã join server để treo voice!**")
+        return
+
+    await ctx.send(f"🎧 **Đã bật Treo Room Voice cho {len(valid_tokens)} Token hợp lệ!**")
+    for token in valid_tokens:
+        task = asyncio.create_task(keep_alive_voice(token, channel_id))
         active_vc_tasks.append(task)
 
 @bot.command(name="loadtxt")
 async def load_txt_cmd(ctx):
-    """Thay thế kho ngôn bằng file .txt"""
     if not ctx.message.attachments or not ctx.message.attachments[0].filename.endswith(".txt"):
         await ctx.send("⚠️ **Vui lòng gửi kèm file `.txt` (mỗi dòng 1 câu)!**")
         return
@@ -481,27 +615,16 @@ async def stop_room_cmd(ctx):
 async def menu_cmd(ctx):
     embed = discord.Embed(
         title="⚡ TOOL DISCORD - HỆ THỐNG CHIẾN WAR ⚡",
-        description="```yaml\n          Hỗ trợ: Nút Bấm Menu + Lệnh Chat     \n```",
+        description="```yaml\n          Tự Động Lọc Token Sai & Kiểm Tra Join Server     \n```",
         color=discord.Color.red()
     )
     embed.add_field(
-        name="📘 Bảng Nút Bấm Thao Tác Nhanh (Cho người lười)",
+        name="📘 Bảng Thao Tác",
         value=(
-            "• **🚀 Khởi Chạy Spam**: Nhấp vào để điền form chạy spam.\n"
-            "• **🎧 Treo Room Voice**: Nhấp vào để điền form treo voice.\n"
-            "• **🔑 Lưu Token Cá Nhân**: Lưu token riêng không cần dán lại.\n"
-            "• **🛑 Dừng Spam / ❌ Dừng Voice**: Bấm dừng trực tiếp ngay lập tức."
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="💻 Cú Pháp Lệnh Chat Trực Tiếp",
-        value=(
-            "• `!settoken token1, token2...`: Lưu kho token.\n"
-            "• `!spam my <ID_Kênh> <Chế_Độ> <Delay>`: Chạy spam nhanh bằng lệnh.\n"
-            "• `!voice my <ID_Room>`: Treo voice nhanh bằng lệnh.\n"
-            "• `!loadtxt`: Đính kèm file `.txt` để nạp kho ngôn mới.\n"
-            "• Gõ `!help` để xem chi tiết toàn bộ lệnh."
+            "• **🚀 Khởi Chạy Spam**: Tự động lọc token sai & chưa join server.\n"
+            "• **🎧 Treo Room Voice**: Chỉ treo những token hợp lệ.\n"
+            "• **🔑 Lưu Token Cá Nhân**: Lưu trữ kho token riêng.\n"
+            "• **🛑 Dừng Spam / ❌ Dừng Voice**: Bấm dừng trực tiếp."
         ),
         inline=False
     )
@@ -511,22 +634,15 @@ async def menu_cmd(ctx):
 async def help_cmd(ctx):
     embed = discord.Embed(
         title="📖 HƯỚNG DẪN SỬ DỤNG TOOL DISCORD",
-        description="Bạn có thể chọn dùng **Nút bấm Menu** hoặc **Lệnh Chat**.",
+        description="Hệ thống tự động lọc token lỗi & chưa join server.",
         color=discord.Color.blue()
     )
     embed.add_field(
-        name="1️⃣ Cách Dùng Nút Bấm (Không cần gõ nhiều)",
-        value="Gõ `!menu` rồi nhấp trực tiếp vào các nút bấm tương ứng trên màn hình.",
-        inline=False
-    )
-    embed.add_field(
-        name="2️⃣ Cú Pháp Lệnh Chat Nhanh",
+        name="✨ Tính năng lọc thông minh",
         value=(
-            "• `!settoken token1, token2...`: Lưu token cá nhân.\n"
-            "• `!mytoken`: Kiểm tra token đã lưu.\n"
-            "• `!spam my 123456789 3 1.0`: Chạy spam bằng token đã lưu (`my`), ID Kênh `123456789`, Chế độ `3`, Delay `1.0`.\n"
-            "• `!voice my 123456789`: Treo voice bằng token đã lưu (`my`).\n"
-            "• `!stopsp`: Dừng spam | `!stoprom`: Dừng treo voice."
+            "• Khi kích hoạt Spam hoặc Voice, bot sẽ quét toàn bộ token.\n"
+            "• Nếu có **Token Sai/Lỗi**: Bot sẽ báo số lượng và tự động loại bỏ.\n"
+            "• Nếu có **Token Chưa Join Server**: Bot sẽ liệt kê danh sách token đó và bắt buộc bạn phải dùng tài khoản đó tham gia server trước."
         ),
         inline=False
     )
@@ -537,7 +653,7 @@ async def bot_keep_alive():
         await asyncio.sleep(30)
         if bot.is_ready():
             try:
-                await bot.change_presence(activity=discord.Game(name="!menu | !help | Tool Online 24/7"))
+                await bot.change_presence(activity=discord.Game(name="!menu | Auto-Check Token Online"))
             except Exception:
                 pass
 
