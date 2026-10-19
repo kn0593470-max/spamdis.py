@@ -113,7 +113,7 @@ MESSAGES = [
     "cố gắng để win tao nhá",
     "tao bất bại mà thằng ngu?",
     "mẹ mày bị t đầu độc đến chết mà",
-    "mày đàn ông hay đàn bà yếu doorways vậy",
+    "mày đàn ông hay đàn bà yếu đuối vậy",
     "con chó đầu đinh bị anh cầm cái đinh ba a thọc vào lỗ nhị nó mà ae =))",
     "thằng như mày xứng đáng ăn cứt tao á",
     "Mấy Con Thú Sài Tool Cha Đòi Bem Cha À",
@@ -128,7 +128,6 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-# Biến lưu trữ danh sách các tác vụ đang chạy để có thể hủy khi cần
 active_spam_tasks = []
 active_vc_tasks = []
 
@@ -162,10 +161,10 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
                             pass
                     await asyncio.sleep(0.5)
     except asyncio.CancelledError:
-        pass # Bắt lỗi khi task bị hủy bởi lệnh stopsp
+        pass
 
 # ---------------------------------------------------------
-# Tiến trình Treo Room Voice 24/7 qua ID Phòng Voice & ID Server
+# Tiến trình Treo Room Voice 24/7 (Kết nối WebSocket Gateway)
 # ---------------------------------------------------------
 async def keep_alive_voice(token, channel_id, guild_id):
     ws_url = "wss://gateway.discord.gg/?v=10&encoding=json"
@@ -235,8 +234,6 @@ class SpamModal(Modal):
             delay = 1.0
 
         await interaction.response.send_message("⚡ **Đã kích hoạt Spam Discord thành công! Gõ !stopsp để dừng.**", ephemeral=True)
-        
-        # Tạo task và lưu lại vào danh sách quản lý
         task = asyncio.create_task(run_spam_task(tokens, channels, mention_ids, delay))
         active_spam_tasks.append(task)
 
@@ -274,6 +271,7 @@ class MenuSelect(Select):
         super().__init__(placeholder="👉 Bấm vào đây để chọn tính năng muốn dùng...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        # Mở Modal ngay lập tức để không bị quá 3s timeout
         if self.values[0] == "spam":
             await interaction.response.send_modal(SpamModal())
         elif self.values[0] == "voice":
@@ -285,7 +283,7 @@ class MenuView(View):
         self.add_item(MenuSelect())
 
 # ---------------------------------------------------------
-# Các lệnh điều khiển (Menu, Stop Spam, Stop Room)
+# Lệnh Menu & Stop
 # ---------------------------------------------------------
 @bot.event
 async def on_ready():
@@ -293,24 +291,25 @@ async def on_ready():
 
 @bot.command(name="menu")
 async def menu_command(ctx):
-    ascii_banner = r"""
-     /\  ______ __   __  __ _____ 
-    /  \|  ____|\ \ / / /_ | ____|
-   / /\ \ |__    \ V /   | | |__  
-  / ____ \  __|   > <    | |___ \ 
- /_/    \_\____|_/ . \   |_|____/ 
-"""
     embed = discord.Embed(
-        title="🌊 Tool Quản Lý Discord By Trần Minh Đức 🌊",
+        title="🌊 TOOL QUẢN LÝ DISCORD BY TRẦN MINH ĐỨC 🌊",
         description=(
-            f"```\n{ascii_banner}\n```\n"
+            "```yaml\n"
+            "==========================================\n"
+            "             ⚡ SYSTEM AEV10 ⚡           \n"
+            "==========================================\n"
+            "```\n"
             "│ ➤ **Developer**: Trần Minh Đức\n"
             "│ ➤ **Hệ thống**: Spam & Treo Room Voice 24/7\n"
-            "└────────────────────────────────────────────┘"
+            "└────────────────────────────────────────────"
         ),
         color=discord.Color.purple()
     )
-    embed.add_field(name="📘 Hướng dẫn", value="Chọn tính năng bạn muốn sử dụng ở menu thả xuống bên dưới.", inline=False)
+    embed.add_field(
+        name="📘 Hướng dẫn",
+        value="Hãy chọn tính năng bạn muốn sử dụng ở Menu thả xuống bên dưới.",
+        inline=False
+    )
     
     await ctx.send(embed=embed, view=MenuView())
 
