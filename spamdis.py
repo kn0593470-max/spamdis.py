@@ -1,8 +1,6 @@
 import os
 import aiohttp
 import asyncio
-import time
-import itertools
 import discord
 from discord.ext import commands
 from discord.ui import View, Select, Modal, TextInput
@@ -115,7 +113,7 @@ MESSAGES = [
     "cố gắng để win tao nhá",
     "tao bất bại mà thằng ngu?",
     "mẹ mày bị t đầu độc đến chết mà",
-    "mày đàn ông hay đàn bà yếu đuối vậy",
+    "mày đàn ông hay đàn bà yếu doorways vậy",
     "con chó đầu đinh bị anh cầm cái đinh ba a thọc vào lỗ nhị nó mà ae =))",
     "thằng như mày xứng đáng ăn cứt tao á",
     "Mấy Con Thú Sài Tool Cha Đòi Bem Cha À",
@@ -130,8 +128,12 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
+# Biến lưu trữ danh sách các tác vụ đang chạy để có thể hủy khi cần
+active_spam_tasks = []
+active_vc_tasks = []
+
 # ---------------------------------------------------------
-# 1. Tác vụ chạy Spam ngầm
+# Tiến trình chạy Spam ngầm
 # ---------------------------------------------------------
 async def run_spam_task(tokens, channels, mention_ids, delay):
     headers_list = [{"Authorization": t.strip(), "Content-Type": "application/json"} for t in tokens if t.strip()]
@@ -140,57 +142,76 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
         return
     mention_text = " ".join([f"<@{uid}>" for uid in mention_ids]) if mention_ids else ""
     semaphore = asyncio.Semaphore(5)
-    async with aiohttp.ClientSession() as session:
-        while True:
-            for msg in MESSAGES:
-                for idx, headers in enumerate(headers_list):
-                    channel_id = channel_list[idx % len(channel_list)]
-                    typing_url = f"https://discord.com/api/v10/channels/{channel_id}/typing"
-                    send_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
-                    try:
-                        async with semaphore:
-                            await session.post(typing_url, headers=headers)
-                            await asyncio.sleep(delay)
-                            full_msg = f"{mention_text} {msg}" if mention_text else msg
-                            async with session.post(send_url, json={"content": full_msg}, headers=headers) as resp:
-                                pass
-                    except Exception:
-                        pass
-                await asyncio.sleep(0.5)
-
-# ---------------------------------------------------------
-# 2. Tác vụ Treo Room Voice 24/7 (Sử dụng discord.py client phụ để join voice)
-# ---------------------------------------------------------
-async def run_vc_task(tokens, invite_url):
-    # Lấy invite code từ link (vd: https://discord.gg/z3J3JvNuE -> z3J3JvNuE)
-    invite_code = invite_url.split("/")[-1].strip()
     
-    for token in tokens:
-        token = token.strip()
-        if not token:
-            continue
-        
-        # Tạo một bot client riêng cho từng token phụ (self-bot/userbot cắm voice)
-        sub_client = commands.Bot(command_prefix="!", intents=discord.Intents.default())
-        
-        @sub_client.event
-        async def on_ready():
-            try:
-                invite = await sub_client.fetch_invite(invite_code)
-                if invite and invite.voice_channel:
-                    channel = invite.voice_channel
-                    # Kết nối vào voice channel và giữ kết nối 24/7
-                    if not sub_client.voice_clients:
-                        vc = await channel.connect(self_deaf=True, self_mute=True)
-                        print(f"[{sub_client.user}] Đã treo thành công vào Voice Room: {channel.name}")
-            except Exception as e:
-                print(f"Lỗi treo room token {token[:10]}...: {e}")
-
-        # Chạy ngầm client phụ dưới dạng task độc lập
-        asyncio.create_task(sub_client.start(token, bot=False))
+    try:
+        async with aiohttp.ClientSession() as session:
+            while True:
+                for msg in MESSAGES:
+                    for idx, headers in enumerate(headers_list):
+                        channel_id = channel_list[idx % len(channel_list)]
+                        typing_url = f"https://discord.com/api/v10/channels/{channel_id}/typing"
+                        send_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+                        try:
+                            async with semaphore:
+                                await session.post(typing_url, headers=headers)
+                                await asyncio.sleep(delay)
+                                full_msg = f"{mention_text} {msg}" if mention_text else msg
+                                async with session.post(send_url, json={"content": full_msg}, headers=headers) as resp:
+                                    pass
+                        except Exception:
+                            pass
+                    await asyncio.sleep(0.5)
+    except asyncio.CancelledError:
+        pass # Bắt lỗi khi task bị hủy bởi lệnh stopsp
 
 # ---------------------------------------------------------
-# 3. Bảng Modal nhập liệu cho Spam
+# Tiến trình Treo Room Voice 24/7 qua ID Phòng Voice & ID Server
+# ---------------------------------------------------------
+async def keep_alive_voice(token, channel_id, guild_id):
+    ws_url = "wss://gateway.discord.gg/?v=10&encoding=json"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(ws_url) as ws:
+                identify_payload = {
+                    "op": 2,
+                    "d": {
+                        "token": token,
+                        "capabilities": 509,
+                        "properties": {
+                            "os": "Android",
+                            "browser": "Discord Android",
+                            "device": "Android"
+                        }
+                    }
+                }
+                await ws.send_json(identify_payload)
+                
+                voice_state_payload = {
+                    "op": 4,
+                    "d": {
+                        "guild_id": guild_id,
+                        "channel_id": channel_id,
+                        "self_mute": True,
+                        "self_deaf": True
+                    }
+                }
+                await ws.send_json(voice_state_payload)
+
+                while True:
+                    await asyncio.sleep(20)
+                    await ws.send_json({"op": 1, "d": None})
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
+
+async def run_vc_task(tokens, channel_id, guild_id):
+    for token in tokens:
+        task = asyncio.create_task(keep_alive_voice(token.strip(), channel_id, guild_id))
+        active_vc_tasks.append(task)
+
+# ---------------------------------------------------------
+# Bảng Modal nhập liệu Spam
 # ---------------------------------------------------------
 class SpamModal(Modal):
     def __init__(self):
@@ -213,29 +234,36 @@ class SpamModal(Modal):
         except ValueError:
             delay = 1.0
 
-        await interaction.response.send_message("⚡ **Đã kích hoạt Spam Discord thành công!**", ephemeral=True)
-        asyncio.create_task(run_spam_task(tokens, channels, mention_ids, delay))
+        await interaction.response.send_message("⚡ **Đã kích hoạt Spam Discord thành công! Gõ !stopsp để dừng.**", ephemeral=True)
+        
+        # Tạo task và lưu lại vào danh sách quản lý
+        task = asyncio.create_task(run_spam_task(tokens, channels, mention_ids, delay))
+        active_spam_tasks.append(task)
 
 # ---------------------------------------------------------
-# 4. Bảng Modal nhập liệu cho Treo Room
+# Bảng Modal nhập liệu Treo Room
 # ---------------------------------------------------------
 class VoiceModal(Modal):
     def __init__(self):
         super().__init__(title="Cấu hình Treo Room Voice 24/7")
-        self.tokens_input = TextInput(label="Token tài khoản treo room (cách nhau dấu phẩy)", style=discord.TextStyle.paragraph, placeholder="token1, token2...", required=True)
-        self.link_input = TextInput(label="Đường link Discord Room", style=discord.TextStyle.short, default="https://discord.gg/z3J3JvNuE", required=True)
+        self.tokens_input = TextInput(label="Token tài khoản treo room (ngăn cách dấu phẩy)", style=discord.TextStyle.paragraph, placeholder="token1, token2...", required=True)
+        self.guild_id_input = TextInput(label="ID Máy chủ (Server ID)", style=discord.TextStyle.short, placeholder="Nhập ID Server...", required=True)
+        self.channel_id_input = TextInput(label="ID Phòng Voice (Voice Channel ID)", style=discord.TextStyle.short, placeholder="Nhập ID Phòng Voice...", required=True)
+        
         self.add_item(self.tokens_input)
-        self.add_item(self.link_input)
+        self.add_item(self.guild_id_input)
+        self.add_item(self.channel_id_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         tokens = [t.strip() for t in self.tokens_input.value.split(",") if t.strip()]
-        invite_url = self.link_input.value.strip()
+        guild_id = self.guild_id_input.value.strip()
+        channel_id = self.channel_id_input.value.strip()
 
-        await interaction.response.send_message(f"🎧 **Đang tiến hành kết nối và treo room 24/7 cho {len(tokens)} tài khoản...**", ephemeral=True)
-        asyncio.create_task(run_vc_task(tokens, invite_url))
+        await interaction.response.send_message(f"🎧 **Đã kết nối treo room cho {len(tokens)} tài khoản! Gõ !stoprom để dừng.**", ephemeral=True)
+        await run_vc_task(tokens, channel_id, guild_id)
 
 # ---------------------------------------------------------
-# 5. Menu Lựa chọn chính (Select Menu)
+# Menu thả xuống chọn tính năng
 # ---------------------------------------------------------
 class MenuSelect(Select):
     def __init__(self):
@@ -257,7 +285,7 @@ class MenuView(View):
         self.add_item(MenuSelect())
 
 # ---------------------------------------------------------
-# Lệnh lệnh !menu
+# Các lệnh điều khiển (Menu, Stop Spam, Stop Room)
 # ---------------------------------------------------------
 @bot.event
 async def on_ready():
@@ -266,12 +294,11 @@ async def on_ready():
 @bot.command(name="menu")
 async def menu_command(ctx):
     ascii_banner = r"""
-   _______ _____        _   _   __  __ _____ _   _ _   _   _____  _   _  _____ 
-  |__   __|  __ \  /\  | \ | | |  \/  |_   _| \ | | | | | |  __ \| | | |/ ____|
-     | |  | |__) |/  \ |  \| | | \  / | | | |  \| | |_| | | |  | | | | | |     
-     | |  |  _  // /\ \ | . ` | | |\/| | | | | . ` |  _  | | |  | | | | | |     
-     | |  | | \ \ / ____ \ |\  | | |  | |_| |_| |\  | | | | | |__| | |_| | |____ 
-     |_|  |_|  /_/    \_\_| \_| |_|  |_|_____|_| \_|_| |_| |_____/ \___/ \_____|
+     /\  ______ __   __  __ _____ 
+    /  \|  ____|\ \ / / /_ | ____|
+   / /\ \ |__    \ V /   | | |__  
+  / ____ \  __|   > <    | |___ \ 
+ /_/    \_\____|_/ . \   |_|____/ 
 """
     embed = discord.Embed(
         title="🌊 Tool Quản Lý Discord By Trần Minh Đức 🌊",
@@ -286,3 +313,31 @@ async def menu_command(ctx):
     embed.add_field(name="📘 Hướng dẫn", value="Chọn tính năng bạn muốn sử dụng ở menu thả xuống bên dưới.", inline=False)
     
     await ctx.send(embed=embed, view=MenuView())
+
+@bot.command(name="stopsp")
+async def stop_spam(ctx):
+    global active_spam_tasks
+    if not active_spam_tasks:
+        await ctx.send("⚠️ Hiện không có tiến trình spam nào đang chạy!")
+        return
+    
+    count = len(active_spam_tasks)
+    for task in active_spam_tasks:
+        task.cancel()
+    active_spam_tasks.clear()
+    
+    await ctx.send(f"🛑 **Đã dừng thành công {count} tiến trình Spam Discord!**")
+
+@bot.command(name="stoprom")
+async def stop_room(ctx):
+    global active_vc_tasks
+    if not active_vc_tasks:
+        await ctx.send("⚠️ Hiện không có tài khoản nào đang treo room!")
+        return
+    
+    count = len(active_vc_tasks)
+    for task in active_vc_tasks:
+        task.cancel()
+    active_vc_tasks.clear()
+    
+    await ctx.send(f"🛑 **Đã ngắt kết nối và dừng treo room cho {count} tài khoản!**")
