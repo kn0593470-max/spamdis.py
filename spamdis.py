@@ -95,7 +95,7 @@ MESSAGES = [
     "thằng bẻm bị t thọc cặc lên ổ cứng phát não rớt ra ngoài=)))",
     "cạn bã của XH mà tưởng mình hay hã con thú🤣💨",
     "thằng óc dái khi nghe tin cha nó chết kiểu: úi úi thằng già này cuối cùng cũng chết r vui vl=))",
-    "thằng lồn ảo anime bật gear 5 lên địt con giải nó trước bàn thờ tổ tiên=))",
+    "thằng lồn ảo anime bật gear 5 lên địt con già nó trước bàn thờ tổ tiên=))",
     "anh cha dượng của bọn mày mà tụi bú cứt 🤣",
     "đây là suy nghĩ của con ngu sau khi nó bị tao sỉ nhục trong đầu nó bây giờ kiểu: quân tử trả thù 10 năm chưa muộn :)))))",
     "thằng ngu bị tao áp đảo từ phút 1 tới giờ nó k có cơ hội để sủa luôn ae=)))",
@@ -117,7 +117,7 @@ MESSAGES = [
     "con chó đầu đinh bị anh cầm cái đinh ba a thọc vào lỗ nhị nó mà ae =))",
     "thằng như mày xứng đáng ăn cứt tao á",
     "Mấy Con Thú Sài Tool Cha Đòi Bem Cha À",
-    "Nghe Cha Chửi Chết Con Gái Mẹ Mày Nè Con Ngu",
+    "Nghe Cha Chửi Con Gái Mẹ Mày Nè Con Ngu",
     "Mẹ Mày Bị Tao Lấy Phóng Lợn Chọt Dô Mu Lồn Khi Đang Đi Làm Gái Ở Ngã 3 Trần Duy Hưng🤣👈",
     "con mẹ m nghe tin m loạn luân vs bố m nên lấy dao cắt cổ tự tử r kìa con ngu :))",
     "m tìm câu nào sát thương tí được k thằng nghịch tử đâm bố đụ mẹ :)) 🤣",
@@ -163,52 +163,76 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
         pass
 
 # ---------------------------------------------------------
-# Tiến trình Treo Room Voice tự động tra cứu Server ID từ Channel ID
+# Tiến trình Treo Room Vĩnh Viễn (Có cơ chế Auto-Reconnect)
 # ---------------------------------------------------------
 async def keep_alive_voice(token, channel_id):
     ws_url = "wss://gateway.discord.gg/?v=10&encoding=json"
     headers = {"Authorization": token.strip(), "Content-Type": "application/json"}
     
-    # Tự động lấy Server ID (guild_id) thông qua Channel ID bằng API Discord
-    guild_id = None
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(f"https://discord.com/api/v10/channels/{channel_id}", headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    guild_id = data.get("guild_id")
-        except Exception:
-            pass
-            
-        if not guild_id:
-            return
+    while True:
+        guild_id = None
+        async with aiohttp.ClientSession() as session:
+            # 1. Tự động lấy Server ID từ Channel ID
+            try:
+                async with session.get(f"https://discord.com/api/v10/channels/{channel_id}", headers=headers) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        guild_id = data.get("guild_id")
+            except Exception:
+                pass
+                
+            if not guild_id:
+                await asyncio.sleep(10)
+                continue
 
-        # Tiến hành kết nối WebSocket Gateway để treo voice
-        try:
-            async with session.ws_connect(ws_url) as ws:
-                identify_payload = {
-                    "op": 2,
-                    "d": {
-                        "token": token,
-                        "capabilities": 509,
-                        "properties": {"os": "Android", "browser": "Discord Android", "device": "Android"}
+            # 2. Kết nối WebSocket Gateway duy trì 24/24 vĩnh viễn
+            try:
+                async with session.ws_connect(ws_url) as ws:
+                    identify_payload = {
+                        "op": 2,
+                        "d": {
+                            "token": token,
+                            "capabilities": 509,
+                            "properties": {"os": "Android", "browser": "Discord Android", "device": "Android"}
+                        }
                     }
-                }
-                await ws.send_json(identify_payload)
-                
-                voice_state_payload = {
-                    "op": 4,
-                    "d": {"guild_id": guild_id, "channel_id": channel_id, "self_mute": True, "self_deaf": True}
-                }
-                await ws.send_json(voice_state_payload)
-                
-                while True:
-                    await asyncio.sleep(20)
-                    await ws.send_json({"op": 1, "d": None})
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
+                    await ws.send_json(identify_payload)
+                    
+                    voice_state_payload = {
+                        "op": 4,
+                        "d": {"guild_id": guild_id, "channel_id": channel_id, "self_mute": True, "self_deaf": True}
+                    }
+                    await ws.send_json(voice_state_payload)
+                    
+                    heartbeat_interval = 20.0
+                    
+                    # Lắng nghe phản hồi để lấy interval chuẩn từ Discord nếu có
+                    async for msg in ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            data = msg.json()
+                            if data.get("op") == 10:
+                                heartbeat_interval = data["d"].get("heartbeat_interval", 20000) / 1000.0
+                                
+                        # Gửi gói tin heartbeat định kỳ liên tục không ngừng nghỉ
+                        async def heartbeat_loop():
+                            while True:
+                                await asyncio.sleep(heartbeat_interval)
+                                await ws.send_json({"op": 1, "d": None})
+                                
+                        hb_task = asyncio.create_task(heartbeat_loop())
+                        
+                        # Giữ kết nối, nếu sập sẽ thoát vòng lặp và tự kết nối lại ngay lập tức
+                        while not ws.closed:
+                            await asyncio.sleep(1)
+                        hb_task.cancel()
+                        break
+            except asyncio.CancelledError:
+                break # Thoát hẳn nếu nhận lệnh stoprom
+            except Exception:
+                pass
+        
+        # Chờ 3 giây rồi tự động kết nối lại nếu bị rớt mạng
+        await asyncio.sleep(3)
 
 async def run_vc_task(tokens, channel_id):
     for token in tokens:
@@ -248,7 +272,7 @@ class VoiceModal(Modal, title="Cấu hình Treo Room Voice 24/7"):
         tokens = [t.strip() for t in self.tokens_input.value.split(",") if t.strip()]
         channel_id = self.channel_id_input.value.strip()
 
-        await interaction.response.send_message(f"🎧 **Đang kết nối treo room cho {len(tokens)} tài khoản qua ID phòng voice! Gõ !stoprom để dừng.**", ephemeral=True)
+        await interaction.response.send_message(f"🎧 **Đã kích hoạt treo room vĩnh viễn 24/24 cho {len(tokens)} tài khoản! Gõ !stoprom để dừng.**", ephemeral=True)
         await run_vc_task(tokens, channel_id)
 
 # ---------------------------------------------------------
@@ -285,7 +309,7 @@ async def menu_command(ctx):
             "==========================================\n"
             "```\n"
             "│ ➤ **Developer**: Trần Minh Đức\n"
-            "│ ➤ **Hệ thống**: Giao Diện Nút Bấm 24/7\n"
+            "│ ➤ **Hệ thống**: Treo Vĩnh Viễn 24/24\n"
             "└────────────────────────────────────────────"
         ),
         color=discord.Color.purple()
@@ -294,7 +318,7 @@ async def menu_command(ctx):
         name="📘 Hướng dẫn sử dụng",
         value=(
             "• Bấm nút **🚀 Cấu Hình & Chạy Spam** để nhập thông tin spam.\n"
-            "• Bấm nút **🎧 Cấu Hình & Treo Room** để treo voice (Chỉ cần ID Phòng Voice).\n"
+            "• Bấm nút **🎧 Cấu Hình & Treo Room** để treo voice vĩnh viễn (Chỉ cần ID Phòng Voice).\n"
             "• Lệnh dừng spam: `!stopsp`\n"
             "• Lệnh dừng treo room: `!stoprom`"
         ),
