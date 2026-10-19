@@ -376,4 +376,182 @@ class VoiceModal(Modal, title="Cấu hình Treo Room Voice 24/7"):
             msg_report.append(f"⚠️ **Đã tự động loại bỏ {invalid_count} Token sai/hỏng!**")
         if not_joined_tokens:
             masked_list = "\n".join([f"• `{mask_token(t)}`" for t in not_joined_tokens])
-            msg_report.append(f"🔴 **Phát hiện {len(not_joined_tokens)} Token CHƯA JOIN
+            msg_report.append(f"🔴 **Phát hiện {len(not_joined_tokens)} Token CHƯA JOIN SERVER! Vui lòng cho join server trước:**\n{masked_list}")
+
+        if not valid_tokens:
+            msg_report.append("❌ **Không có token nào hợp lệ và đã join server để treo voice!**")
+            await interaction.followup.send("\n\n".join(msg_report), ephemeral=True)
+            return
+
+        msg_report.append(f"🎧 **Đã bật chế độ Treo Room cho {len(valid_tokens)} Token hợp lệ! Gõ !stoprom để dừng.**")
+        await interaction.followup.send("\n\n".join(msg_report), ephemeral=True)
+
+        await run_vc_task(valid_tokens, channel_id)
+
+# ---------------------------------------------------------
+# Modal Lưu Token Cá Nhân
+# ---------------------------------------------------------
+class SetTokenModal(Modal, title="Lưu Kho Token Cá Nhân"):
+    tokens_input = TextInput(label="Nhập danh sách Token (Cách nhau bằng dấu phẩy)", style=discord.TextStyle.paragraph, placeholder="token1, token2, token3...", required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = str(interaction.user.id)
+        tokens = [t.strip() for t in self.tokens_input.value.split(",") if t.strip()]
+        if not tokens:
+            await interaction.response.send_message("⚠️ **Không tìm thấy token hợp lệ!**", ephemeral=True)
+            return
+        data = load_user_tokens()
+        data[user_id] = tokens
+        save_user_tokens(data)
+        await interaction.response.send_message(f"✅ **Đã lưu {len(tokens)} token vào kho cá nhân của bạn! Bạn có thể gõ 'my' để dùng.**", ephemeral=True)
+
+# ---------------------------------------------------------
+# Persistent View
+# ---------------------------------------------------------
+class MenuView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🚀 Cấu Hình & Chạy Spam", style=discord.ButtonStyle.green, custom_id="btn_spam_persistent")
+    async def spam_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(SpamModal())
+
+    @discord.ui.button(label="🎧 Cấu Hình & Treo Room", style=discord.ButtonStyle.blurple, custom_id="btn_voice_persistent")
+    async def voice_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(VoiceModal())
+
+    @discord.ui.button(label="🔑 Lưu Token Cá Nhân", style=discord.ButtonStyle.gray, custom_id="btn_settoken_persistent")
+    async def settoken_button(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.send_modal(SetTokenModal())
+
+# ---------------------------------------------------------
+# Lệnh Bot
+# ---------------------------------------------------------
+@bot.event
+async def on_ready():
+    bot.add_view(MenuView())
+    print(f"=== Bot [Trần Minh Đức] đã sẵn sàng dưới tên {bot.user} ===")
+
+@bot.command(name="menu")
+async def menu_command(ctx):
+    embed = discord.Embed(
+        title="🌊 TOOL QUẢN LÝ DISCORD BY TRẦN MINH ĐỨC 🌊",
+        description=(
+            "```yaml\n"
+            "==========================================\n"
+            "      ⚡ SYSTEM AEV10 (AUTO-FILTER) ⚡    \n"
+            "==========================================\n"
+            "```\n"
+            "│ ➤ **Developer**: Trần Minh Đức\n"
+            "│ ➤ **Hệ thống**: Treo Voice 100% Không Rớt\n"
+            "└────────────────────────────────────────────"
+        ),
+        color=discord.Color.purple()
+    )
+    embed.add_field(
+        name="📘 Hướng dẫn sử dụng",
+        value=(
+            "• Bấm nút **🚀 Cấu Hình & Chạy Spam** để spam.\n"
+            "• Bấm nút **🎧 Cấu Hình & Treo Room** để treo voice.\n"
+            "• Bấm nút **🔑 Lưu Token Cá Nhân** để lưu token riêng.\n"
+            "• Lệnh hướng dẫn chi tiết: `!help`\n"
+            "• Lệnh dừng spam: `!stopsp` | Lệnh dừng treo room: `!stoprom`"
+        ),
+        inline=False
+    )
+    await ctx.send(embed=embed, view=MenuView())
+
+@bot.command(name="help")
+async def help_command(ctx):
+    embed = discord.Embed(
+        title="📖 HƯỚNG DẪN SỬ DỤNG TOOL DISCORD",
+        description="Hệ thống tự động lọc token lỗi & kiểm tra join server trước khi chạy.",
+        color=discord.Color.blue()
+    )
+    embed.add_field(
+        name="1️⃣ Tính năng Tự Động Lọc Token",
+        value=(
+            "• Khi chạy Spam hoặc Voice, bot sẽ tự động quét danh sách token.\n"
+            "• **Token sai/hỏng**: Tự động loại bỏ.\n"
+            "• **Token chưa join server**: Bot sẽ cảnh báo và liệt kê rõ để bạn cho account join server trước."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="2️⃣ Quản lý Token Cá Nhân",
+        value=(
+            "• `!settoken token1, token2...`: Lưu kho token riêng.\n"
+            "• `!mytoken`: Xem token đã lưu.\n"
+            "💡 *Mẹo:* Gõ chữ **`my`** ở ô nhập token trên Modal để dùng kho riêng."
+        ),
+        inline=False
+    )
+    await ctx.send(embed=embed)
+
+@bot.command(name="settoken")
+async def set_token_cmd(ctx, *, tokens_str: str = None):
+    if not tokens_str:
+        await ctx.send(f"⚠️ **Cú pháp:** `!settoken token1, token2...`")
+        return
+    tokens = [t.strip() for t in tokens_str.split(",") if t.strip()]
+    data = load_user_tokens()
+    data[str(ctx.author.id)] = tokens
+    save_user_tokens(data)
+    await ctx.send(f"✅ **Đã lưu thành công {len(tokens)} token vào kho riêng của bạn ({ctx.author.mention})!**")
+
+@bot.command(name="mytoken")
+async def my_token_cmd(ctx):
+    user_id = str(ctx.author.id)
+    data = load_user_tokens()
+    user_tokens = data.get(user_id, [])
+    if not user_tokens:
+        await ctx.send(f"⚠️ **Kho token của bạn đang trống! Hãy dùng lệnh `!settoken` hoặc nút Lưu Token.**")
+        return
+    masked_tokens = [mask_token(t) for t in user_tokens]
+    await ctx.send(f"📂 **Kho token riêng của bạn ({len(user_tokens)} token):**\n```yaml\n" + "\n".join(masked_tokens) + "\n```")
+
+@bot.command(name="loadtxt")
+async def load_txt_command(ctx):
+    if not ctx.message.attachments:
+        await ctx.send("⚠️ **Hãy đính kèm một file `.txt` (mỗi dòng 1 câu) khi dùng lệnh `!loadtxt`!**")
+        return
+    attachment = ctx.message.attachments[0]
+    if not attachment.filename.endswith(".txt"):
+        await ctx.send("⚠️ **File tải lên phải có định dạng `.txt`!**")
+        return
+    try:
+        file_bytes = await attachment.read()
+        text_content = file_bytes.decode("utf-8", errors="ignore")
+        new_lines = [line.strip() for line in text_content.splitlines() if line.strip()]
+        if new_lines:
+            global MESSAGES
+            MESSAGES = new_lines
+            await ctx.send(f"✅ **Đã nạp thành công {len(MESSAGES)} câu ngôn mới từ file `{attachment.filename}`!**")
+        else:
+            await ctx.send("⚠️ **File `.txt` trống!**")
+    except Exception as e:
+        await ctx.send(f"❌ **Lỗi khi đọc file:** `{e}`")
+
+@bot.command(name="stopsp")
+async def stop_spam(ctx):
+    global active_spam_tasks
+    if not active_spam_tasks:
+        await ctx.send("⚠️ Không có tiến trình spam nào đang chạy!")
+        return
+    count = len(active_spam_tasks)
+    for task in active_spam_tasks:
+        task.cancel()
+    active_spam_tasks.clear()
+    await ctx.send(f"🛑 **Đã dừng thành công {count} tiến trình Spam!**")
+
+@bot.command(name="stoprom")
+async def stop_room(ctx):
+    global active_vc_tasks
+    if not active_vc_tasks:
+        await ctx.send("⚠️ Không có tài khoản nào đang treo room!")
+        return
+    count = len(active_vc_tasks)
+    for task in active_vc_tasks:
+        task.cancel()
+    active_vc_tasks.clear()
+    await ctx.send(f"🛑 **Đã ngắt kết nối và dừng treo room cho {count} tài khoản!**")
