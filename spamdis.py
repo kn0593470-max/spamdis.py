@@ -7,6 +7,7 @@ import discord
 from discord.ext import commands
 from discord.ui import View, Select, Modal, TextInput
 
+# Danh sách câu spam / ngôn gốc
 MESSAGES = [
     "sao m rụng ngay khi anh đến r",
     "mồ côi thắp hương cha mẹ trc khi chửi chưa",
@@ -48,7 +49,7 @@ MESSAGES = [
     "Tao Lỡ Cho Mẹ Mày Bú Cu Tao Rồi Sướng Vãi Cặc🧐 🤙",
     "Lêu Lêu Nhìn Cha Đụ Mẹ Mày Ko Làm Được Gì À Đừng Có Cay Cha Nha 😝 👎",
     "‎‎bị tao khủng bố quá nát mẹ cái hộp sọ với não luôn rồi à =))",
-    "m là con đĩ đầu đinh giết má để loạn luân với bố m mà con khốn",
+    "m là con đĩ đầu đinh giết má để loạn luân với bố mà con khốn",
     "văn thơ anh lai láng để con mẹ m dạng háng mỗi đêm =)))",
     "qua sông thì phải bắc cầu kiều con mẹ mày muốn làm đĩ thì phải yêu chiều các anh mà 🤣👈",
     "con lồn ngu này hay đạp xe đạp ngang nhà tao bị tao chọi đá về méc mẹ mà🤣",
@@ -129,6 +130,9 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
+# ---------------------------------------------------------
+# 1. Tác vụ chạy Spam ngầm
+# ---------------------------------------------------------
 async def run_spam_task(tokens, channels, mention_ids, delay):
     headers_list = [{"Authorization": t.strip(), "Content-Type": "application/json"} for t in tokens if t.strip()]
     channel_list = [c.strip() for c in channels if c.strip()]
@@ -154,34 +158,47 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
                         pass
                 await asyncio.sleep(0.5)
 
+# ---------------------------------------------------------
+# 2. Tác vụ Treo Room Voice 24/7 (Sử dụng discord.py client phụ để join voice)
+# ---------------------------------------------------------
+async def run_vc_task(tokens, invite_url):
+    # Lấy invite code từ link (vd: https://discord.gg/z3J3JvNuE -> z3J3JvNuE)
+    invite_code = invite_url.split("/")[-1].strip()
+    
+    for token in tokens:
+        token = token.strip()
+        if not token:
+            continue
+        
+        # Tạo một bot client riêng cho từng token phụ (self-bot/userbot cắm voice)
+        sub_client = commands.Bot(command_prefix="!", intents=discord.Intents.default())
+        
+        @sub_client.event
+        async def on_ready():
+            try:
+                invite = await sub_client.fetch_invite(invite_code)
+                if invite and invite.voice_channel:
+                    channel = invite.voice_channel
+                    # Kết nối vào voice channel và giữ kết nối 24/7
+                    if not sub_client.voice_clients:
+                        vc = await channel.connect(self_deaf=True, self_mute=True)
+                        print(f"[{sub_client.user}] Đã treo thành công vào Voice Room: {channel.name}")
+            except Exception as e:
+                print(f"Lỗi treo room token {token[:10]}...: {e}")
+
+        # Chạy ngầm client phụ dưới dạng task độc lập
+        asyncio.create_task(sub_client.start(token, bot=False))
+
+# ---------------------------------------------------------
+# 3. Bảng Modal nhập liệu cho Spam
+# ---------------------------------------------------------
 class SpamModal(Modal):
     def __init__(self):
         super().__init__(title="Cấu hình Spam Discord")
-        self.tokens_input = TextInput(
-            label="Token (Nhiều token ngăn cách bằng dấu phẩy)",
-            style=discord.TextStyle.paragraph,
-            placeholder="token1, token2, token3...",
-            required=True
-        )
-        self.channels_input = TextInput(
-            label="ID Kênh (Nhiều ID ngăn cách bằng dấu phẩy)",
-            style=discord.TextStyle.short,
-            placeholder="id_kenh_1, id_kenh_2...",
-            required=True
-        )
-        self.tags_input = TextInput(
-            label="ID Tag (Để trống nếu không tag ai)",
-            style=discord.TextStyle.short,
-            placeholder="id_user_1, id_user_2 (hoặc để trống)",
-            required=False
-        )
-        self.delay_input = TextInput(
-            label="Delay giả typing (giây)",
-            style=discord.TextStyle.short,
-            placeholder="Ví dụ: 1.5",
-            required=True,
-            default="1.0"
-        )
+        self.tokens_input = TextInput(label="Token (Nhiều token ngăn cách dấu phẩy)", style=discord.TextStyle.paragraph, placeholder="token1, token2...", required=True)
+        self.channels_input = TextInput(label="ID Kênh (Nhiều ID ngăn cách dấu phẩy)", style=discord.TextStyle.short, placeholder="id_kenh_1, id_kenh_2...", required=True)
+        self.tags_input = TextInput(label="ID Tag (Để trống nếu không tag)", style=discord.TextStyle.short, required=False)
+        self.delay_input = TextInput(label="Delay giả typing (giây)", style=discord.TextStyle.short, default="1.0", required=True)
         self.add_item(self.tokens_input)
         self.add_item(self.channels_input)
         self.add_item(self.tags_input)
@@ -196,44 +213,76 @@ class SpamModal(Modal):
         except ValueError:
             delay = 1.0
 
-        await interaction.response.send_message(
-            f"⚡ **Đã kích hoạt tính năng Spam Discord thành công!**\n"
-            f"🚀 *Hệ thống đang tiến hành spam nhây vô hạn ngầm...*",
-            ephemeral=True
-        )
+        await interaction.response.send_message("⚡ **Đã kích hoạt Spam Discord thành công!**", ephemeral=True)
         asyncio.create_task(run_spam_task(tokens, channels, mention_ids, delay))
 
-class SpamView(View):
+# ---------------------------------------------------------
+# 4. Bảng Modal nhập liệu cho Treo Room
+# ---------------------------------------------------------
+class VoiceModal(Modal):
+    def __init__(self):
+        super().__init__(title="Cấu hình Treo Room Voice 24/7")
+        self.tokens_input = TextInput(label="Token tài khoản treo room (cách nhau dấu phẩy)", style=discord.TextStyle.paragraph, placeholder="token1, token2...", required=True)
+        self.link_input = TextInput(label="Đường link Discord Room", style=discord.TextStyle.short, default="https://discord.gg/z3J3JvNuE", required=True)
+        self.add_item(self.tokens_input)
+        self.add_item(self.link_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        tokens = [t.strip() for t in self.tokens_input.value.split(",") if t.strip()]
+        invite_url = self.link_input.value.strip()
+
+        await interaction.response.send_message(f"🎧 **Đang tiến hành kết nối và treo room 24/7 cho {len(tokens)} tài khoản...**", ephemeral=True)
+        asyncio.create_task(run_vc_task(tokens, invite_url))
+
+# ---------------------------------------------------------
+# 5. Menu Lựa chọn chính (Select Menu)
+# ---------------------------------------------------------
+class MenuSelect(Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="🚀 Chức năng: Spam Discord", value="spam", description="Spam tin nhắn + giả lập typing liên tục"),
+            discord.SelectOption(label="🎧 Chức năng: Treo Room Voice 24/7", value="voice", description="Treo tài khoản trong phòng voice không bị out"),
+        ]
+        super().__init__(placeholder="👉 Bấm vào đây để chọn tính năng muốn dùng...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.values[0] == "spam":
+            await interaction.response.send_modal(SpamModal())
+        elif self.values[0] == "voice":
+            await interaction.response.send_modal(VoiceModal())
+
+class MenuView(View):
     def __init__(self):
         super().__init__(timeout=None)
+        self.add_item(MenuSelect())
 
-    @discord.ui.button(label="🚀 Mở Bảng Nhập Cấu Hình Spam", style=discord.ButtonStyle.green)
-    async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(SpamModal())
-
+# ---------------------------------------------------------
+# Lệnh lệnh !menu
+# ---------------------------------------------------------
 @bot.event
 async def on_ready():
     print(f"=== Bot [Trần Minh Đức] đã sẵn sàng dưới tên {bot.user} ===")
 
-@bot.command(name="spam")
-async def spam_command(ctx):
+@bot.command(name="menu")
+async def menu_command(ctx):
     ascii_banner = r"""
    _______ _____        _   _   __  __ _____ _   _ _   _   _____  _   _  _____ 
   |__   __|  __ \  /\  | \ | | |  \/  |_   _| \ | | | | | |  __ \| | | |/ ____|
      | |  | |__) |/  \ |  \| | | \  / | | | |  \| | |_| | | |  | | | | | |     
      | |  |  _  // /\ \ | . ` | | |\/| | | | | . ` |  _  | | |  | | | | | |     
      | |  | | \ \ / ____ \ |\  | | |  | |_| |_| |\  | | | | | |__| | |_| | |____ 
-     |_|  |_|  \_/_/    \_\_| \_| |_|  |_|_____|_| \_|_| |_| |_____/ \___/ \_____|
+     |_|  |_|  /_/    \_\_| \_| |_|  |_|_____|_| \_|_| |_| |_____/ \___/ \_____|
 """
     embed = discord.Embed(
-        title="🌊 Tool Spam Discord By Trần Minh Đức 🌊",
+        title="🌊 Tool Quản Lý Discord By Trần Minh Đức 🌊",
         description=(
             f"```\n{ascii_banner}\n```\n"
             "│ ➤ **Developer**: Trần Minh Đức\n"
-            "│ ➤ **Tool**: Chuyên dụng spam Discord\n"
+            "│ ➤ **Hệ thống**: Spam & Treo Room Voice 24/7\n"
             "└────────────────────────────────────────────┘"
         ),
         color=discord.Color.purple()
     )
-    embed.add_field(name="📘 Hướng dẫn", value="Nhấn nút bên dưới để mở bảng điền Token, ID Kênh, ID Tag và Delay giây trực tiếp trên Discord.", inline=False)
-    await ctx.send(embed=embed, view=SpamView())
+    embed.add_field(name="📘 Hướng dẫn", value="Chọn tính năng bạn muốn sử dụng ở menu thả xuống bên dưới.", inline=False)
+    
+    await ctx.send(embed=embed, view=MenuView())
