@@ -7,9 +7,6 @@ import discord
 from discord.ext import commands
 from discord.ui import View, Select, Modal, TextInput
 
-# ---------------------------------------------------------
-# Danh sách câu spam / ngôn gốc
-# ---------------------------------------------------------
 MESSAGES = [
     "sao m rụng ngay khi anh đến r",
     "mồ côi thắp hương cha mẹ trc khi chửi chưa",
@@ -51,7 +48,7 @@ MESSAGES = [
     "Tao Lỡ Cho Mẹ Mày Bú Cu Tao Rồi Sướng Vãi Cặc🧐 🤙",
     "Lêu Lêu Nhìn Cha Đụ Mẹ Mày Ko Làm Được Gì À Đừng Có Cay Cha Nha 😝 👎",
     "‎‎bị tao khủng bố quá nát mẹ cái hộp sọ với não luôn rồi à =))",
-    "m là con đĩ đầu đinh giết má để loạn luân với bố mà con khốn",
+    "m là con đĩ đầu đinh giết má để loạn luân với bố m mà con khốn",
     "văn thơ anh lai láng để con mẹ m dạng háng mỗi đêm =)))",
     "qua sông thì phải bắc cầu kiều con mẹ mày muốn làm đĩ thì phải yêu chiều các anh mà 🤣👈",
     "con lồn ngu này hay đạp xe đạp ngang nhà tao bị tao chọi đá về méc mẹ mà🤣",
@@ -112,7 +109,7 @@ MESSAGES = [
     "thằng cầm thú loạn luân some với mẹ ruột và ba ruột còn quay clip",
     "m bị óc cứt hay sao z hả mà t nói m dell hiểu hay bố phải nhét cứt vào đầu m thì m mới thông hả con óc lồn ơi",
     "Một lũ xam cu lên đây đú ửa ngôn thì nhạt như cái nước lồn của con đỉ mẹ cm v hăng lên đi con mẹ mày bị t xé rách mu sao chối ????",
-    "bà nhà mày bị tao treo cổ lên trên trần nhà mà?",
+    "bà già mày bị tao treo cổ lên trên trần nhà mà?",
     "thằng bất tài vô dụng sủa mạnh lên đi",
     "cố gắng để win tao nhá",
     "tao bất bại mà thằng ngu?",
@@ -132,19 +129,13 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-# ---------------------------------------------------------
-# Tiến trình chạy spam ngầm bất đồng bộ
-# ---------------------------------------------------------
 async def run_spam_task(tokens, channels, mention_ids, delay):
     headers_list = [{"Authorization": t.strip(), "Content-Type": "application/json"} for t in tokens if t.strip()]
     channel_list = [c.strip() for c in channels if c.strip()]
-    
     if not headers_list or not channel_list:
         return
-
     mention_text = " ".join([f"<@{uid}>" for uid in mention_ids]) if mention_ids else ""
     semaphore = asyncio.Semaphore(5)
-
     async with aiohttp.ClientSession() as session:
         while True:
             for msg in MESSAGES:
@@ -152,13 +143,10 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
                     channel_id = channel_list[idx % len(channel_list)]
                     typing_url = f"https://discord.com/api/v10/channels/{channel_id}/typing"
                     send_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
-                    
                     try:
                         async with semaphore:
-                            # Fake typing
                             await session.post(typing_url, headers=headers)
                             await asyncio.sleep(delay)
-
                             full_msg = f"{mention_text} {msg}" if mention_text else msg
                             async with session.post(send_url, json={"content": full_msg}, headers=headers) as resp:
                                 pass
@@ -166,13 +154,9 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
                         pass
                 await asyncio.sleep(0.5)
 
-# ---------------------------------------------------------
-# Bảng nhập thông tin Spam trực tiếp trên Discord (Modal)
-# ---------------------------------------------------------
 class SpamModal(Modal):
     def __init__(self):
         super().__init__(title="Cấu hình Spam Discord")
-
         self.tokens_input = TextInput(
             label="Token (Nhiều token ngăn cách bằng dấu phẩy)",
             style=discord.TextStyle.paragraph,
@@ -198,7 +182,6 @@ class SpamModal(Modal):
             required=True,
             default="1.0"
         )
-
         self.add_item(self.tokens_input)
         self.add_item(self.channels_input)
         self.add_item(self.tags_input)
@@ -208,7 +191,6 @@ class SpamModal(Modal):
         tokens = [t.strip() for t in self.tokens_input.value.split(",") if t.strip()]
         channels = [c.strip() for c in self.channels_input.value.split(",") if c.strip()]
         mention_ids = [m.strip() for m in self.tags_input.value.split(",") if m.strip()]
-        
         try:
             delay = float(self.delay_input.value.strip())
         except ValueError:
@@ -219,12 +201,8 @@ class SpamModal(Modal):
             f"🚀 *Hệ thống đang tiến hành spam nhây vô hạn ngầm...*",
             ephemeral=True
         )
-
         asyncio.create_task(run_spam_task(tokens, channels, mention_ids, delay))
 
-# ---------------------------------------------------------
-# Giao diện nút bấm mở bảng cấu hình
-# ---------------------------------------------------------
 class SpamView(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -233,9 +211,6 @@ class SpamView(View):
     async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SpamModal())
 
-# ---------------------------------------------------------
-# Lệnh bot
-# ---------------------------------------------------------
 @bot.event
 async def on_ready():
     print(f"=== Bot [Trần Minh Đức] đã sẵn sàng dưới tên {bot.user} ===")
@@ -261,12 +236,4 @@ async def spam_command(ctx):
         color=discord.Color.purple()
     )
     embed.add_field(name="📘 Hướng dẫn", value="Nhấn nút bên dưới để mở bảng điền Token, ID Kênh, ID Tag và Delay giây trực tiếp trên Discord.", inline=False)
-    
     await ctx.send(embed=embed, view=SpamView())
-
-if __name__ == "__main__":
-    TOKEN = "MTU2MTc4MjkwODUwMTUwMDAwNQ.GHRYM4.--2eHoWTd2_gO5_qd_ELssG9z4qfOlTkoYOiPk"
-    if TOKEN:
-        bot.run(TOKEN)
-    else:
-        print("❌ Token trống.")
