@@ -253,11 +253,11 @@ class MenuView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.button(label="🚀 Cấu Hình & Chạy Spam", style=discord.ButtonStyle.green, custom_id="btn_spam")
+    @discord.ui.button(label="🚀 Cấu Hình & Chạy Spam", style=discord.ButtonStyle.green, custom_id="btn_spam")
     async def spam_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(SpamModal())
 
-    @discord.button(label="🎧 Cấu Hình & Treo Room", style=discord.ButtonStyle.blurple, custom_id="btn_voice")
+    @discord.ui.button(label="🎧 Cấu Hình & Treo Room", style=discord.ButtonStyle.blurple, custom_id="btn_voice")
     async def voice_button(self, interaction: discord.Interaction, button: Button):
         await interaction.response.send_modal(VoiceModal())
 
