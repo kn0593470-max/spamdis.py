@@ -146,7 +146,7 @@ MESSAGES = [
     "cha m lấy gạch ống chọi nát cái đầu mu lồn mẹ mày giờ con bẻm đú",
     "con mồ côi mày mà rớt là tao lấy chiếc xe rùa t cán lòi mu lồn mẹ m đó gán trụ nha",
     "cú đấm sấm sét của anh mtrung đấm nát cái lồn mẹ thằng chó đú nhây như mày🤣👈",
-    "cú đá cuồng phong đá bung cái lồn mẹ mày nè thằng não cặc🤣👈",
+    "cú đá cuồng phong đá bung cái lồn mẹ mày nè thằng脑cặc🤣👈",
     "anh lấy cái ô tô anh đâm thẳng dô cái lồn con gái mẹ thằng súc vật như m",
     "hôm nay anh sẽ thay trời hành đạo anh cạo nát cái lông lồn con gái mẹ mày đó nghe chưa",
     "anh đẹp trai hai mái quay qua bên trái đái nát dô cái bàn thờ gái mẹ nghe hong con dog=))",
@@ -168,12 +168,12 @@ MESSAGES = [
     "thằng cặc bị tao hạ đo ván sau 1 cú sút ngoạn mục đến từ vị trí anh trung hw=)))",
     "thằng óc cặc đòi va anh và cái kết bị anh chửi chạy khắp nơi=))",
     "mẹ mày bị t địt rách màn trinh mà🤪",
-    "🤭🤭Mày bê đê ngũ sắc dell công khai bị tao chọc quá máu cặc mày dồn lên não choa mày chết hả",
+    "🤭🤭Mày bê đê ngũ sắc dell công khai bị tao chọc quá máu cặc mày dồn lên brain choa mày chết hả",
     "nhà thằng đú này nghèo không có tiền chơi gái nên phải loạn luân luôn với mẹ nó để giải khát cơn thèm thuồng",
     "thằng cầm thú loạn luân some với mẹ ruột và ba ruột còn quay clip",
     "m bị óc cứt hay sao z hả mà t nói m dell hiểu hay bố phải nhét cứt vào đầu m thì m mới thông hả con óc lồn ơi",
     "Một lũ xam cu lên đây đú ửa ngôn thì nhạt như cái nước lồn của con đỉ mẹ cm v hăng lên đi con mẹ mày bị t xé rách mu sao chối ????",
-    "bà già mày bị tao treo cổ lên trên trần nhà mà?",
+    "bà giảm mày bị tao treo cổ lên trên trần nhà mà?",
     "thằng bất tài vô dụng sủa mạnh lên đi",
     "cố gắng để win tao nhá",
     "tao bất bại mà thằng ngu?",
@@ -182,7 +182,7 @@ MESSAGES = [
     "con chó đầu đinh bị anh cầm cái đinh ba a thọc vào lỗ nhị nó mà ae =))",
     "thằng như mày xứng đáng ăn cứt tao á",
     "Mấy Con Thú Sài Tool Cha Đòi Bem Cha À",
-    "Nghe Cha Chửi Con Gái Mẹ Mày Nè Con Ngu",
+    "Nghe Cha Chửi Con Gái M mẹ Mày Nè Con Ngu",
     "Mẹ Mày Bị Tao Lấy Phóng Lợn Chọt Dô Mu Lồn Khi Đang Đi Làm Gái Ở Ngã 3 Trần Duy Hưng🤣👈",
     "con mẹ m nghe tin m loạn luân vs bố m nên lấy dao cắt cổ tự tử r kìa con ngu :))",
     "m tìm câu nào sát thương tí được k thằng nghịch tử đâm bố đụ mẹ :)) 🤣",
@@ -229,7 +229,7 @@ async def run_spam_task(tokens, channels, mention_ids, delay):
         pass
 
 # ---------------------------------------------------------
-# Tiến trình Treo Room Bất Tử (Đã fix Cloudflare)
+# Tiến trình Treo Room Bất Tử
 # ---------------------------------------------------------
 async def keep_alive_voice(token, channel_id):
     ws_url = "wss://gateway.discord.gg/?v=10&encoding=json"
@@ -310,7 +310,7 @@ async def run_vc_task(tokens, channel_id):
         active_vc_tasks.append(task)
 
 # ---------------------------------------------------------
-# Modal Spam (Đã tích hợp Auto-Filter Token)
+# Modal Forms
 # ---------------------------------------------------------
 class SpamModal(Modal, title="Cấu hình Spam Discord"):
     tokens_input = TextInput(label="Token (Dán trực tiếp hoặc gõ 'my')", style=discord.TextStyle.paragraph, placeholder="token1, token2... hoặc gõ 'my'", required=True)
@@ -353,9 +353,6 @@ class SpamModal(Modal, title="Cấu hình Spam Discord"):
         task = asyncio.create_task(run_spam_task(valid_tokens, channels, mention_ids, delay))
         active_spam_tasks.append(task)
 
-# ---------------------------------------------------------
-# Modal Treo Room (Đã tích hợp Auto-Filter Token)
-# ---------------------------------------------------------
 class VoiceModal(Modal, title="Cấu hình Treo Room Voice 24/7"):
     tokens_input = TextInput(label="Token tài khoản (Dán trực tiếp hoặc gõ 'my')", style=discord.TextStyle.paragraph, placeholder="token1, token2... hoặc gõ 'my'", required=True)
     channel_id_input = TextInput(label="ID Phòng Voice", style=discord.TextStyle.short, placeholder="Nhập ID Phòng Voice...", required=True)
@@ -388,9 +385,6 @@ class VoiceModal(Modal, title="Cấu hình Treo Room Voice 24/7"):
 
         await run_vc_task(valid_tokens, channel_id)
 
-# ---------------------------------------------------------
-# Modal Lưu Token Cá Nhân
-# ---------------------------------------------------------
 class SetTokenModal(Modal, title="Lưu Kho Token Cá Nhân"):
     tokens_input = TextInput(label="Nhập danh sách Token (Cách nhau bằng dấu phẩy)", style=discord.TextStyle.paragraph, placeholder="token1, token2, token3...", required=True)
 
@@ -491,7 +485,7 @@ async def help_command(ctx):
 @bot.command(name="settoken")
 async def set_token_cmd(ctx, *, tokens_str: str = None):
     if not tokens_str:
-        await ctx.send(f"⚠️ **Cú pháp:** `!settoken token1, token2...`")
+        await ctx.send("⚠️ **Cú pháp:** `!settoken token1, token2...`")
         return
     tokens = [t.strip() for t in tokens_str.split(",") if t.strip()]
     data = load_user_tokens()
@@ -505,7 +499,7 @@ async def my_token_cmd(ctx):
     data = load_user_tokens()
     user_tokens = data.get(user_id, [])
     if not user_tokens:
-        await ctx.send(f"⚠️ **Kho token của bạn đang trống! Hãy dùng lệnh `!settoken` hoặc nút Lưu Token.**")
+        await ctx.send("⚠️ **Kho token của bạn đang trống! Hãy dùng lệnh `!settoken` hoặc nút Lưu Token.**")
         return
     masked_tokens = [mask_token(t) for t in user_tokens]
     await ctx.send(f"📂 **Kho token riêng của bạn ({len(user_tokens)} token):**\n```yaml\n" + "\n".join(masked_tokens) + "\n```")
